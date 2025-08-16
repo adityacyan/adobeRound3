@@ -778,6 +778,109 @@ async def get_document_sections(session_id: str, document_id: str):
         "extracted_text_length": document.get("extracted_text_length")
     }
 
+class TextSelectionRequest(BaseModel):
+    """Request model for text selection updates."""
+    selected_text: str
+    selection_length: int
+    coordinates: Optional[dict] = None
+    timestamp: Optional[datetime] = None
+
+class TextSelectionResponse(BaseModel):
+    """Response model for text selection operations."""
+    success: bool
+    message: str
+    selection_id: Optional[str] = None
+    timestamp: datetime
+
+@app.post("/session/{session_id}/text-selection", response_model=TextSelectionResponse)
+async def update_text_selection(
+    session_id: str,
+    selection_data: TextSelectionRequest
+):
+    """
+    Update text selection state for a session.
+    
+    Requirements:
+    - 3.2: Capture text selection and provide visual feedback
+    - 3.7: Clear visual indication of current selection mode
+    """
+    session = get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found or expired")
+    
+    # Generate selection ID for tracking
+    selection_id = str(uuid.uuid4())
+    
+    # Store selection in session
+    if "text_selections" not in session:
+        session["text_selections"] = []
+    
+    selection_record = {
+        "selection_id": selection_id,
+        "text": selection_data.selected_text,
+        "length": selection_data.selection_length,
+        "coordinates": selection_data.coordinates,
+        "timestamp": selection_data.timestamp or datetime.now(),
+        "session_id": session_id
+    }
+    
+    session["text_selections"].append(selection_record)
+    session["current_selection"] = selection_record
+    
+    logger.info(f"Text selection updated for session {session_id}: {selection_data.selection_length} characters")
+    
+    return TextSelectionResponse(
+        success=True,
+        message=f"Text selection captured ({selection_data.selection_length} characters)",
+        selection_id=selection_id,
+        timestamp=datetime.now()
+    )
+
+@app.delete("/session/{session_id}/text-selection")
+async def clear_text_selection(session_id: str):
+    """
+    Clear current text selection for a session.
+    
+    Requirements:
+    - 3.7: Clear visual indication of current selection mode
+    """
+    session = get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found or expired")
+    
+    # Clear current selection
+    session["current_selection"] = None
+    
+    logger.info(f"Text selection cleared for session {session_id}")
+    
+    return TextSelectionResponse(
+        success=True,
+        message="Text selection cleared",
+        selection_id=None,
+        timestamp=datetime.now()
+    )
+
+@app.get("/session/{session_id}/text-selection")
+async def get_current_text_selection(session_id: str):
+    """
+    Get current text selection state for a session.
+    
+    Requirements:
+    - 3.7: Clear visual indication of current selection mode
+    """
+    session = get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found or expired")
+    
+    current_selection = session.get("current_selection")
+    
+    return {
+        "session_id": session_id,
+        "has_selection": current_selection is not None,
+        "current_selection": current_selection,
+        "selection_history": session.get("text_selections", [])[-5:]  # Last 5 selections
+    }
+
 @app.get("/session/{session_id}/documents/{document_id}/pdf")
 async def serve_pdf_file(session_id: str, document_id: str):
     """

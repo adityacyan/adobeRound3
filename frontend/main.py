@@ -302,8 +302,10 @@ def render_pdf_viewer(tab_data, zoom_level, tab_index):
         right: 0;
         bottom: 0;
         overflow: hidden;
-        opacity: 0.3;
+        opacity: 0.2;
         line-height: 1.0;
+        user-select: text;
+        pointer-events: auto;
     }}
     
     .textLayer > span {{
@@ -312,10 +314,16 @@ def render_pdf_viewer(tab_data, zoom_level, tab_index):
         white-space: pre;
         cursor: text;
         transform-origin: 0% 0%;
+        user-select: text;
     }}
     
     .textLayer ::selection {{
-        background: rgba(0, 123, 255, 0.3);
+        background: rgba(0, 123, 255, 0.4);
+        color: rgba(0, 123, 255, 0.8);
+    }}
+    
+    .textLayer:hover {{
+        opacity: 0.1;
     }}
     
     .text-selection-overlay {{
@@ -323,6 +331,61 @@ def render_pdf_viewer(tab_data, zoom_level, tab_index):
         background: rgba(0, 123, 255, 0.3);
         pointer-events: none;
         z-index: 100;
+        border: 2px solid rgba(0, 123, 255, 0.6);
+        border-radius: 2px;
+    }}
+    
+    .selection-mode-indicator {{
+        position: absolute;
+        top: 15px;
+        left: 15px;
+        background: rgba(0, 123, 255, 0.95);
+        color: white;
+        padding: 6px 12px;
+        border-radius: 20px;
+        font-size: 11px;
+        font-weight: 600;
+        z-index: 1001;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        transition: all 0.3s ease;
+        border: 2px solid rgba(255,255,255,0.3);
+        backdrop-filter: blur(5px);
+    }}
+    
+    .selection-mode-indicator.active {{
+        background: rgba(40, 167, 69, 0.95);
+        border-color: rgba(255,255,255,0.5);
+        transform: scale(1.05);
+    }}
+    
+    .selection-feedback {{
+        position: fixed;
+        background: rgba(40, 167, 69, 0.95);
+        color: white;
+        padding: 8px 12px;
+        border-radius: 6px;
+        font-size: 12px;
+        font-weight: 600;
+        z-index: 9999;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+        pointer-events: none;
+        opacity: 0;
+        transform: translateY(-10px);
+        transition: all 0.3s ease;
+        border: 1px solid rgba(255,255,255,0.3);
+    }}
+    
+    .selection-feedback.show {{
+        opacity: 1;
+        transform: translateY(0);
+    }}
+    
+
+    
+    @keyframes pulse {{
+        0% {{ transform: scale(1); }}
+        50% {{ transform: scale(1.05); }}
+        100% {{ transform: scale(1); }}
     }}
     </style>
     
@@ -343,6 +406,9 @@ def render_pdf_viewer(tab_data, zoom_level, tab_index):
     let currentPage = 1;
     let isTextSelectionMode = false;
     let selectedText = '';
+    let selectionStartTime = null;
+    let selectionEndTime = null;
+    let selectionCoordinates = null;
     
     function initializePDFViewer() {{
         const loadingDiv = document.getElementById(VIEWER_ID + '_loading');
@@ -658,20 +724,60 @@ def render_pdf_viewer(tab_data, zoom_level, tab_index):
                     textLayerDiv.appendChild(textSpan);
                 }});
                 
-                // Add selection event listeners
-                textLayerDiv.addEventListener('mouseup', function(e) {{
-                    setTimeout(function() {{
-                        const selection = window.getSelection();
-                        if (selection.toString().trim()) {{
-                            selectedText = selection.toString().trim();
-                            console.log('Text selected:', selectedText);
-                            notifyTextSelection(selectedText);
-                        }}
-                    }}, 10);
+                // Simple native text selection - just like any normal text
+                textLayerDiv.style.userSelect = 'text';
+                textLayerDiv.style.cursor = 'text';
+                
+                // Listen for selection changes
+                document.addEventListener('selectionchange', function() {{
+                    const selection = window.getSelection();
+                    const newSelectedText = selection.toString().trim();
+                    
+                    if (newSelectedText && newSelectedText.length > 0) {{
+                        selectedText = newSelectedText;
+                        console.log('✅ Text selected:', selectedText.substring(0, 100) + (selectedText.length > 100 ? '...' : ''));
+                        
+                        // Update selection mode indicator
+                        updateSelectionModeIndicator(true);
+                        
+                        // Notify the application about text selection
+                        notifyTextSelection(selectedText, {{
+                            text: selectedText,
+                            length: selectedText.length,
+                            timestamp: Date.now()
+                        }});
+                    }} else if (selectedText) {{
+                        // Selection was cleared
+                        selectedText = '';
+                        updateSelectionModeIndicator(false);
+                        notifyTextDeselection();
+                    }}
                 }});
                 
-                textLayerDiv.addEventListener('selectstart', function(e) {{
-                    e.stopPropagation();
+                // Handle mouse leave to stop dragging
+                textLayerDiv.addEventListener('mouseleave', function(e) {{
+                    if (isDragging) {{
+                        isDragging = false;
+                        console.log('🔄 Drag cancelled - mouse left text area');
+                    }}
+                }});
+                
+                // Global selection change handler for cleanup
+                document.addEventListener('selectionchange', function() {{
+                    if (selectionTimeout) {{
+                        clearTimeout(selectionTimeout);
+                    }}
+                    
+                    selectionTimeout = setTimeout(function() {{
+                        const selection = window.getSelection();
+                        const currentText = selection.toString().trim();
+                        
+                        if (!currentText && selectedText && !isDragging) {{
+                            selectedText = '';
+                            updateSelectionModeIndicator(false);
+                            notifyTextDeselection();
+                        }}
+                    }}, 300);
                 }});
                 
                 // Position text layer relative to canvas
@@ -749,33 +855,237 @@ def render_pdf_viewer(tab_data, zoom_level, tab_index):
     function toggleTextSelection() {{
         isTextSelectionMode = !isTextSelectionMode;
         const btn = document.getElementById(VIEWER_ID + '_textSelect');
+        
         if (btn) {{
-            btn.textContent = isTextSelectionMode ? '📝 Exit Select' : '📝 Select';
-            btn.style.backgroundColor = isTextSelectionMode ? '#28a745' : '#007bff';
+            if (isTextSelectionMode) {{
+                btn.textContent = '📝 Exit Select';
+                btn.style.backgroundColor = '#28a745';
+            }} else {{
+                btn.textContent = '📝 Select Text';
+                btn.style.backgroundColor = '#007bff';
+            }}
         }}
         
-        // Enable/disable text selection
-        const container = document.getElementById(VIEWER_ID + '_pdfjs');
-        if (container) {{
-            container.style.userSelect = isTextSelectionMode ? 'text' : 'none';
+        // Simply enable/disable text selection
+        const textLayers = document.querySelectorAll('.textLayer');
+        textLayers.forEach(layer => {{
+            if (isTextSelectionMode) {{
+                layer.style.userSelect = 'text';
+                layer.style.cursor = 'text';
+            }} else {{
+                layer.style.userSelect = 'none';
+                layer.style.cursor = 'default';
+                // Clear selection when disabling
+                window.getSelection().removeAllRanges();
+                selectedText = '';
+                notifyTextDeselection();
+            }}
+        }});
+        
+        console.log('🔄 Text selection:', isTextSelectionMode ? 'ENABLED' : 'DISABLED');
+    }}
+    
+    // Note: createPreciseSelection function removed - now using anchor-based selection
+    // The new implementation uses document.caretRangeFromPoint() for precise anchor positioning
+    // and creates selections directly from anchor to current pointer position without artifacts
+    
+    // Note: getCharacterOffsetAtPoint function removed - no longer needed with anchor-based selection
+    
+    function showSelectionModeIndicator(isSelecting) {{
+        let indicator = document.getElementById(VIEWER_ID + '_selection_indicator');
+        const container = document.getElementById(VIEWER_ID + '_content') || document.getElementById(VIEWER_ID);
+        
+        if (!indicator && container) {{
+            indicator = document.createElement('div');
+            indicator.id = VIEWER_ID + '_selection_indicator';
+            indicator.className = 'selection-mode-indicator';
+            container.style.position = 'relative';
+            container.appendChild(indicator);
+        }}
+        
+        if (indicator) {{
+            if (isSelecting) {{
+                indicator.textContent = '📝 Selecting Text...';
+                indicator.className = 'selection-mode-indicator active';
+            }} else {{
+                indicator.textContent = '📄 PDF Viewer';
+                indicator.className = 'selection-mode-indicator';
+            }}
         }}
     }}
     
-    function notifyTextSelection(text) {{
-        // This would integrate with Streamlit's session state in production
-        console.log('Notifying text selection:', text);
+    function updateSelectionModeIndicator(hasSelection) {{
+        let indicator = document.getElementById(VIEWER_ID + '_selection_indicator');
+        const container = document.getElementById(VIEWER_ID + '_content') || document.getElementById(VIEWER_ID);
         
-        // For demo purposes, show an alert
-        if (text.length > 0) {{
-            alert(`Text selected: "${{text.substring(0, 100)}}${{text.length > 100 ? '...' : ''}}"`);
+        if (!indicator && container) {{
+            indicator = document.createElement('div');
+            indicator.id = VIEWER_ID + '_selection_indicator';
+            indicator.className = 'selection-mode-indicator';
+            container.style.position = 'relative';
+            container.appendChild(indicator);
         }}
+        
+        if (indicator) {{
+            if (hasSelection) {{
+                const charCount = selectedText ? selectedText.length : 0;
+                indicator.textContent = `✅ Selected (${{charCount}} chars)`;
+                indicator.className = 'selection-mode-indicator active';
+            }} else {{
+                indicator.textContent = '📄 PDF Viewer';
+                indicator.className = 'selection-mode-indicator';
+            }}
+        }}
+    }}
+
+    
+    function showSelectionFeedback(x, y, textLength) {{
+        // Remove any existing feedback
+        const existingFeedback = document.getElementById(VIEWER_ID + '_selection_feedback');
+        if (existingFeedback) {{
+            existingFeedback.remove();
+        }}
+        
+        // Create new feedback element
+        const feedback = document.createElement('div');
+        feedback.id = VIEWER_ID + '_selection_feedback';
+        feedback.className = 'selection-feedback';
+        feedback.style.position = 'fixed';
+        feedback.style.zIndex = '9999';
+        feedback.style.pointerEvents = 'none';
+        
+        // Position feedback near cursor but keep it on screen
+        const feedbackX = Math.min(x + 15, window.innerWidth - 200);
+        const feedbackY = Math.max(y - 35, 10);
+        
+        feedback.style.left = feedbackX + 'px';
+        feedback.style.top = feedbackY + 'px';
+        feedback.textContent = `✅ Selected ${{textLength}} characters`;
+        
+        document.body.appendChild(feedback);
+        
+        // Show with animation
+        setTimeout(() => {{
+            feedback.classList.add('show');
+        }}, 10);
+        
+        // Hide feedback after 3 seconds
+        setTimeout(function() {{
+            if (feedback && feedback.parentNode) {{
+                feedback.classList.remove('show');
+                setTimeout(() => {{
+                    if (feedback && feedback.parentNode) {{
+                        feedback.remove();
+                    }}
+                }}, 300);
+            }}
+        }}, 3000);
+    }}
+    
+    function notifyTextSelection(text, metadata) {{
+        // Enhanced notification with metadata
+        console.log('Notifying text selection:', text);
+        console.log('Selection metadata:', metadata);
+        
+        // Update global state
+        window.currentTextSelection = {{
+            text: text,
+            timestamp: Date.now(),
+            metadata: metadata
+        }};
+        
+        // Send selection to backend API
+        if (window.sessionId) {{
+            fetch(`http://localhost:8000/session/${{window.sessionId}}/text-selection`, {{
+                method: 'POST',
+                headers: {{
+                    'Content-Type': 'application/json',
+                }},
+                body: JSON.stringify({{
+                    selected_text: text,
+                    selection_length: text.length,
+                    coordinates: metadata.coordinates,
+                    timestamp: new Date(metadata.endTime).toISOString()
+                }})
+            }})
+            .then(response => response.json())
+            .then(data => {{
+                console.log('✅ Text selection sent to backend:', data);
+            }})
+            .catch(error => {{
+                console.error('❌ Failed to send text selection to backend:', error);
+            }});
+        }}
+        
+        // Trigger Streamlit state update (if available)
+        if (window.streamlitAPI) {{
+            window.streamlitAPI.setComponentValue({{
+                type: 'text_selection',
+                data: {{
+                    text: text,
+                    length: text.length,
+                    timestamp: metadata.endTime,
+                    coordinates: metadata.coordinates
+                }}
+            }});
+        }}
+        
+        // For demo purposes, show console message
+        if (text.length > 0) {{
+            console.log(`✅ Text selected: "${{text.substring(0, 100)}}${{text.length > 100 ? '...' : ''}}"`);
+        }}
+    }}
+    
+    function notifyTextDeselection() {{
+        console.log('Text deselected');
+        
+        // Clear global state
+        window.currentTextSelection = null;
+        
+        // Send deselection to backend API
+        if (window.sessionId) {{
+            fetch(`http://localhost:8000/session/${{window.sessionId}}/text-selection`, {{
+                method: 'DELETE',
+                headers: {{
+                    'Content-Type': 'application/json',
+                }}
+            }})
+            .then(response => response.json())
+            .then(data => {{
+                console.log('✅ Text deselection sent to backend:', data);
+            }})
+            .catch(error => {{
+                console.error('❌ Failed to send text deselection to backend:', error);
+            }});
+        }}
+        
+        // Trigger Streamlit state update (if available)
+        if (window.streamlitAPI) {{
+            window.streamlitAPI.setComponentValue({{
+                type: 'text_deselection',
+                data: {{ timestamp: Date.now() }}
+            }});
+        }}
+        
+        console.log('✅ Text deselection processed');
+    }}
+    
+    // Initialize selection mode indicator
+    function initializeSelectionIndicator() {{
+        setTimeout(() => {{
+            showSelectionModeIndicator(false);
+        }}, 500);
     }}
     
     // Initialize viewer when DOM is ready
     if (document.readyState === 'loading') {{
-        document.addEventListener('DOMContentLoaded', initializePDFViewer);
+        document.addEventListener('DOMContentLoaded', function() {{
+            initializePDFViewer();
+            initializeSelectionIndicator();
+        }});
     }} else {{
         initializePDFViewer();
+        initializeSelectionIndicator();
     }}
     </script>
     """
@@ -916,16 +1226,21 @@ def create_workbench_interface():
                     # PDF rendering with Adobe PDF Embed API and PDF.js fallback
                     render_pdf_viewer(current_tab, st.session_state[f'zoom_level_{i}'], i)
                     
-                    # Text selection simulation
+                    # Text selection testing controls
+                    st.markdown("**🧪 Test Text Selection:**")
                     col1, col2 = st.columns(2)
                     with col1:
-                        if st.button("📝 Simulate Text Selection", key=f"select_{i}"):
+                        if st.button("📝 Simulate Selection", key=f"select_{i}", help="Simulate selecting text in the PDF"):
                             st.session_state.text_selected = True
-                            st.success("Text selection simulated!")
+                            st.session_state.selection_length = 247
+                            st.session_state.selected_text = "This is a simulated text selection from the PDF document. It demonstrates the text selection functionality and mode detection capabilities of the system."
+                            st.rerun()
                     with col2:
-                        if st.button("❌ Clear Selection", key=f"clear_{i}"):
+                        if st.button("🔄 Clear Selection", key=f"clear_{i}", help="Clear the current text selection"):
                             st.session_state.text_selected = False
-                            st.info("Selection cleared")
+                            st.session_state.selection_length = 0
+                            st.session_state.selected_text = ""
+                            st.rerun()
     
     # Right Sidebar - Actions
     with right_col:
@@ -941,8 +1256,21 @@ def create_workbench_interface():
         
         st.markdown("### 📝 Summary Generation")
         
-        # Dynamic summary button text
+        # Text selection state management
         text_selected = getattr(st.session_state, 'text_selected', False)
+        selection_length = getattr(st.session_state, 'selection_length', 0)
+        selected_text_preview = getattr(st.session_state, 'selected_text', '')
+        
+        # Clear and intuitive selection mode indicator
+        if text_selected and selection_length > 0:
+            st.success(f"✅ **Text Selected** ({selection_length} characters)")
+            if selected_text_preview:
+                preview = selected_text_preview[:100] + "..." if len(selected_text_preview) > 100 else selected_text_preview
+                st.caption(f"Preview: *{preview}*")
+        else:
+            st.info("📄 **Document Mode** - Select text in PDF to enable selection mode")
+        
+        # Dynamic summary button text
         summary_text = "📝 Summarize Selection" if text_selected else "📝 Summarize Document"
         
         summary_disabled = st.session_state.active_tab == 'welcome'
@@ -1080,3 +1408,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+    #this is the file at 17 aug

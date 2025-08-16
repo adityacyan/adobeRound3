@@ -51,7 +51,8 @@
     - Implement zoom and scroll controls within viewing area
     - _Requirements: 3.1, 3.5_
 
-  - [ ] 4.2 Add text selection functionality
+  - [x] 4.2 Add text selection functionality
+
     - Implement text selection capture with visual feedback
     - Create selection state management and mode detection
     - Add clear visual indication of current selection mode
