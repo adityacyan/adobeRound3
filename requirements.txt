@@ -1,0 +1,39 @@
+# Core FastAPI and web framework dependencies
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+
+# CORS middleware for frontend integration
+python-multipart==0.0.6
+
+# Session and caching dependencies
+redis==5.0.1
+
+# PDF processing dependencies
+PyPDF2==3.0.1
+pdfplumber==0.10.3
+PyMuPDF==1.23.14
+pytesseract==0.3.10
+Pillow==10.1.0
+
+# Machine learning and search dependencies
+sentence-transformers==2.2.2
+faiss-cpu==1.7.4
+numpy==1.24.3
+
+# LLM integration
+google-generativeai==0.3.2
+
+# Audio processing
+azure-cognitiveservices-speech==1.34.0
+
+# Streamlit for frontend
+streamlit==1.28.1
+
+# Environment and configuration
+python-dotenv==1.0.0
+
+# Development and testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+httpx==0.25.2
