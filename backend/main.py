@@ -970,12 +970,20 @@ async def serve_pdf_file(session_id: str, document_id: str):
     if not file_path or not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="PDF file not found")
     
-    # Return the PDF file
-    return FileResponse(
+    # Return the PDF file with CORS headers
+    response = FileResponse(
         path=file_path,
         media_type="application/pdf",
         filename=document.get("original_filename", "document.pdf")
     )
+    
+    # Add CORS headers for PDF viewing
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Cache-Control"] = "public, max-age=3600"
+    
+    return response
 
 @app.post("/session/{session_id}/documents/{document_id}/reprocess")
 async def reprocess_document(session_id: str, document_id: str):

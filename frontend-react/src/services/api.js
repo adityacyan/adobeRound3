@@ -107,7 +107,7 @@ export const searchRelatedContent = async (sessionId, selectedText, documentIds 
             params: {
                 session_id: sessionId,
                 selected_text: selectedText,
-                document_ids: documentIds,
+                ...(documentIds && { document_ids: documentIds }),
             },
         });
         return response.data;

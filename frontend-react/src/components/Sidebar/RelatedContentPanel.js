@@ -22,6 +22,12 @@ const RelatedContentPanel = ({
     const handleSearch = async (text) => {
         if (!sessionId || !text || text.length < 5) return;
 
+        console.log('🔍 Starting related content search:', {
+            sessionId: sessionId.substring(0, 8) + '...',
+            selectedText: text.substring(0, 100),
+            documentsAvailable: documents.length
+        });
+
         setSearching(true);
         setError(null);
         setLastSearchText(text);
@@ -29,15 +35,25 @@ const RelatedContentPanel = ({
         try {
             const result = await searchRelatedContent(sessionId, text);
 
-            if (result.related_sections) {
+            console.log('🔍 Search result received:', {
+                totalResults: result.total_results,
+                relatedSections: result.related_sections?.length || 0,
+                searchTimeMs: result.search_time_ms,
+                processingStatus: result.processing_status
+            });
+
+            if (result.related_sections && result.related_sections.length > 0) {
                 setRelatedContent(result.related_sections);
+                setError(null);
             } else {
-                setError(result.message || 'No related content found');
+                const message = result.message || result.processing_note || 'No related content found';
+                setError(message);
                 setRelatedContent([]);
             }
         } catch (error) {
-            console.error('Search failed:', error);
-            setError('Search failed. Please try again.');
+            console.error('🔍 Search failed:', error);
+            const errorMessage = error.response?.data?.detail || error.message || 'Search failed. Please try again.';
+            setError(errorMessage);
             setRelatedContent([]);
         } finally {
             setSearching(false);
@@ -83,6 +99,19 @@ const RelatedContentPanel = ({
                     >
                         <Search className={`h-4 w-4 ${searching ? 'animate-pulse' : ''}`} />
                     </button>
+                )}
+            </div>
+
+            {/* Status indicator */}
+            <div className="text-xs text-gray-600 p-2 bg-gray-50 rounded border">
+                <div className="flex justify-between">
+                    <span>Session: {sessionId ? '✅ Connected' : '❌ No session'}</span>
+                    <span>Docs: {documents.length}</span>
+                </div>
+                {lastSearchText && (
+                    <div className="mt-1 text-gray-500">
+                        Last: "{lastSearchText.substring(0, 30)}..."
+                    </div>
                 )}
             </div>
 
