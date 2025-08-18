@@ -156,9 +156,75 @@ Both services run in development mode with auto-reload:
 taskkill /F /IM python.exe
 ```
 
+## 🔍 Testing Search Engine Console Output
+
+The backend now prints detailed search results to the console! You can test this in several ways:
+
+### Method 1: Direct Test Scripts
+
+```cmd
+# Test with sample data and see console output
+python test_console_search_demo.py
+```
+
+### Method 2: API Testing
+
+When the backend is running, search API calls will print detailed results:
+
+```cmd
+# Start backend and watch console for search output
+python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Then make API calls to see console output:
+
+- `POST /search/enhanced` - Enhanced multi-tier search
+- `POST /search/related-content` - Related content search
+- `POST /search/semantic` - Basic semantic search
+
+### Console Output Features
+
+The console will show:
+
+- 🔍 **Search Query**: What was searched for
+- ⏱️ **Search Time**: How long the search took
+- 📄 **Results**: Document, section, confidence scores
+- 📝 **Snippets**: Relevant text excerpts
+- 📊 **Statistics**: Cache hits, search performance
+- 🎯 **Search Tier**: Fast vs precision search used
+
+### Example Console Output
+
+```
+================================================================================
+🔍 SEMANTIC SEARCH RESULTS
+================================================================================
+Query: 'machine learning patterns'
+Search Time: 37.9ms
+Results Found: 1
+Confidence Threshold: 0.5
+
+📄 Result #1
+   Document: demo_doc
+   Section: ml_intro
+   Page: 1
+   Type: paragraph
+   Similarity: 0.689
+   Confidence: 0.758
+   Search Tier: precision
+   📝 Snippet: Machine learning algorithms analyze large datasets...
+
+📊 Search Statistics:
+   Cache Hit Rate: 0.0%
+   Precision Search Rate: 100.0%
+   Average Search Time: 37.9ms
+   Total Searches: 1
+================================================================================
+```
+
 ## 📝 Logs
 
-**Backend logs**: Displayed in Terminal 1
+**Backend logs**: Displayed in Terminal 1 (includes search results!)
 **Frontend logs**: Displayed in Terminal 2
 
 Both services provide detailed logging for debugging.

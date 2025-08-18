@@ -34,6 +34,7 @@ venv.bak/
 # IDE
 .vscode/
 .idea/
+.kiro/
 *.swp
 *.swo
 *~
@@ -58,6 +59,8 @@ temp/
 tmp/
 
 # Credentials and secrets
+.env.example
+
 credentials/
 *.key
 *.pem
@@ -84,3 +87,9 @@ uploads/
 sessions/
 audio_output/
 vector_cache/
+.env.example
+.env.example
+/.kiro/tasks.md
+/.kiro/
+
+.env.example

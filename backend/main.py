@@ -24,8 +24,10 @@ from PIL import Image
 import io
 import re
 
-# Import enhanced document processor
+# Import enhanced document processor and embedding service
 from .document_processor import document_processor, ProcessingProgress
+from .embedding_service import embedding_service, SearchResult
+from .search_engine import search_engine, EnhancedSearchResult, SearchContext
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -170,6 +172,17 @@ def cleanup_expired_sessions():
     
     for session_id in expired_sessions:
         session_data = sessions[session_id]
+        
+        # Clean up embeddings for all documents in session
+        documents = session_data.get("documents", [])
+        for document in documents:
+            document_id = document.get("document_id")
+            if document_id:
+                try:
+                    embedding_service.remove_document_embeddings(document_id)
+                except Exception as e:
+                    logger.warning(f"Failed to clean up embeddings for document {document_id}: {e}")
+        
         # Clean up temporary directory if it exists
         if session_data.get("temp_directory") and os.path.exists(session_data["temp_directory"]):
             try:
@@ -271,7 +284,7 @@ def extract_text_with_fitz(pdf_path: str) -> tuple[str, List[DocumentSection], s
         doc = fitz.open(pdf_path)
         full_text = ""
         sections = []
-        
+        print("using fitz")
         for page_num in range(len(doc)):
             page = doc[page_num]
             
@@ -318,6 +331,7 @@ def extract_text_with_ocr(pdf_path: str) -> tuple[str, List[DocumentSection], st
         doc = fitz.open(pdf_path)
         full_text = ""
         sections = []
+        print('using ocr')
         
         for page_num in range(len(doc)):
             page = doc[page_num]
@@ -572,6 +586,17 @@ async def delete_session(session_id: str):
     """
     if session_id in sessions:
         session_data = sessions[session_id]
+        
+        # Clean up embeddings for all documents in session
+        documents = session_data.get("documents", [])
+        for document in documents:
+            document_id = document.get("document_id")
+            if document_id:
+                try:
+                    embedding_service.remove_document_embeddings(document_id)
+                except Exception as e:
+                    logger.warning(f"Failed to clean up embeddings for document {document_id}: {e}")
+        
         # Clean up temporary directory
         if session_data.get("temp_directory") and os.path.exists(session_data["temp_directory"]):
             try:
@@ -1094,6 +1119,424 @@ async def root():
             "reprocess_document": "/session/{session_id}/documents/{document_id}/reprocess",
             "processing_stats": "/processing/stats"
         }
+    }
+
+class SemanticSearchRequest(BaseModel):
+    """Request model for semantic search."""
+    query: str
+    top_k: int = 5
+    document_ids: Optional[List[str]] = None
+
+class SemanticSearchResponse(BaseModel):
+    """Response model for semantic search."""
+    query: str
+    results: List[SearchResult]
+    total_results: int
+    search_time_ms: float
+    embeddings_available: bool
+
+@app.post("/search/semantic", response_model=SemanticSearchResponse)
+async def semantic_search(
+    session_id: str,
+    search_request: SemanticSearchRequest
+):
+    """
+    Perform semantic search across processed documents in a session.
+    
+    Requirements:
+    - 3.1.1: Semantic search across processed documents within 1 second
+    - 3.1.2: Search within available processed documents
+    - 6.1: Fast similarity search using FAISS
+    """
+    # Validate session exists
+    session = get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found or expired")
+    
+    # Check if embedding service is initialized
+    if not embedding_service.is_initialized:
+        try:
+            await embedding_service.initialize()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to initialize embedding service: {str(e)}")
+    
+    # Get processed documents in session
+    documents = session.get("documents", [])
+    processed_documents = [
+        doc for doc in documents 
+        if doc.get("processing_status") == "completed"
+    ]
+    
+    if not processed_documents:
+        return SemanticSearchResponse(
+            query=search_request.query,
+            results=[],
+            total_results=0,
+            search_time_ms=0.0,
+            embeddings_available=False
+        )
+    
+    # Filter by document IDs if specified
+    document_ids = search_request.document_ids
+    if document_ids:
+        processed_document_ids = [doc["document_id"] for doc in processed_documents]
+        document_ids = [doc_id for doc_id in document_ids if doc_id in processed_document_ids]
+    else:
+        document_ids = [doc["document_id"] for doc in processed_documents]
+    
+    if not document_ids:
+        return SemanticSearchResponse(
+            query=search_request.query,
+            results=[],
+            total_results=0,
+            search_time_ms=0.0,
+            embeddings_available=False
+        )
+    
+    try:
+        start_time = time.time()
+        
+        # Print API request info to console
+        print(f"\n🌐 API REQUEST: Basic Semantic Search")
+        print(f"   Session: {session_id}")
+        print(f"   Query: '{search_request.query}'")
+        print(f"   Top K: {search_request.top_k}")
+        print(f"   Documents: {len(document_ids) if document_ids else 'all'}")
+        
+        # Perform semantic search
+        results = await embedding_service.semantic_search(
+            query=search_request.query,
+            top_k=search_request.top_k,
+            document_ids=document_ids
+        )
+        
+        # Print basic results summary
+        print(f"   ✅ Found {len(results)} results in {(time.time() - start_time) * 1000:.1f}ms")
+        
+        search_time_ms = (time.time() - start_time) * 1000
+        
+        return SemanticSearchResponse(
+            query=search_request.query,
+            results=results,
+            total_results=len(results),
+            search_time_ms=search_time_ms,
+            embeddings_available=True
+        )
+        
+    except Exception as e:
+        logger.error(f"Semantic search failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Semantic search failed: {str(e)}")
+
+@app.get("/search/stats")
+async def get_search_stats():
+    """
+    Get embedding service statistics.
+    Requirements: 6.1 - performance monitoring for search capabilities
+    """
+    return {
+        "embedding_service": embedding_service.get_stats(),
+        "document_processor": document_processor.get_processing_stats(),
+        "search_engine": search_engine.get_stats()
+    }
+
+class EnhancedSearchRequest(BaseModel):
+    """Request model for enhanced semantic search with multi-tier strategy."""
+    query: str
+    document_ids: Optional[List[str]] = None
+    selected_text: Optional[str] = None
+    active_document_id: Optional[str] = None
+    max_results: int = 5
+    confidence_threshold: float = 0.75
+
+class EnhancedSearchResponse(BaseModel):
+    """Response model for enhanced semantic search."""
+    query: str
+    results: List[dict]  # Will contain EnhancedSearchResult data
+    total_results: int
+    search_time_ms: float
+    confidence_filtered_count: int
+    processing_status: Dict[str, bool]
+    search_strategy_used: str
+
+@app.post("/search/enhanced", response_model=EnhancedSearchResponse)
+async def enhanced_semantic_search(
+    session_id: str,
+    search_request: EnhancedSearchRequest
+):
+    """
+    Perform enhanced semantic search with multi-tier strategy and confidence filtering.
+    
+    Requirements:
+    - 3.1.3: Build semantic search across processed documents
+    - 3.1.6: Implement multi-tier search strategy (fast → precision)
+    - 3.1.7: Add confidence-based result filtering (>0.75 threshold)
+    - 3.1.6: Create search result ranking and snippet extraction
+    """
+    # Validate session exists
+    session = get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found or expired")
+    
+    # Check if embedding service is initialized
+    if not embedding_service.is_initialized:
+        try:
+            await embedding_service.initialize()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to initialize embedding service: {str(e)}")
+    
+    # Get document processing status
+    documents = session.get("documents", [])
+    processing_status = {}
+    available_document_ids = []
+    
+    for doc in documents:
+        doc_id = doc["document_id"]
+        is_processed = doc.get("processing_status") == "completed"
+        processing_status[doc_id] = is_processed
+        if is_processed:
+            available_document_ids.append(doc_id)
+    
+    # Filter document IDs if specified
+    if search_request.document_ids:
+        available_document_ids = [
+            doc_id for doc_id in search_request.document_ids 
+            if doc_id in available_document_ids
+        ]
+    
+    if not available_document_ids:
+        return EnhancedSearchResponse(
+            query=search_request.query,
+            results=[],
+            total_results=0,
+            search_time_ms=0.0,
+            confidence_filtered_count=0,
+            processing_status=processing_status,
+            search_strategy_used="none"
+        )
+    
+    try:
+        start_time = time.time()
+        
+        # Create search context
+        context = SearchContext(
+            query=search_request.query,
+            document_ids=available_document_ids,
+            selected_text=search_request.selected_text,
+            active_document_id=search_request.active_document_id,
+            processing_status=processing_status
+        )
+        
+        # Update search engine strategy if needed
+        if search_request.confidence_threshold != search_engine.strategy.confidence_threshold:
+            search_engine.strategy.confidence_threshold = search_request.confidence_threshold
+        if search_request.max_results != search_engine.strategy.max_results:
+            search_engine.strategy.max_results = search_request.max_results
+        
+        # Print API request info to console
+        print(f"\n🌐 API REQUEST: Enhanced Search")
+        print(f"   Session: {session_id}")
+        print(f"   Query: '{search_request.query}'")
+        print(f"   Documents: {len(available_document_ids)} available")
+        print(f"   Confidence Threshold: {search_request.confidence_threshold}")
+        
+        # Perform enhanced search
+        enhanced_results = await search_engine.search(context)
+        
+        search_time_ms = (time.time() - start_time) * 1000
+        
+        # Convert results to dict format for JSON response
+        results_data = []
+        for result in enhanced_results:
+            result_dict = {
+                "section_id": result.section_id,
+                "document_id": result.document_id,
+                "text": result.text,
+                "similarity_score": result.similarity_score,
+                "confidence_score": result.confidence_score,
+                "page_number": result.page_number,
+                "section_type": result.section_type,
+                "snippet": result.snippet,
+                "search_tier": result.search_tier.value,
+                "related_sections": result.related_sections,
+                "processing_time_ms": result.processing_time_ms
+            }
+            results_data.append(result_dict)
+        
+        # Determine search strategy used
+        search_strategy = "fast_only"
+        if any(r["search_tier"] == "precision" for r in results_data):
+            search_strategy = "multi_tier"
+        
+        # Get confidence filtering stats
+        stats = search_engine.get_stats()
+        confidence_filtered_count = stats.get("confidence_filtered_results", 0)
+        
+        return EnhancedSearchResponse(
+            query=search_request.query,
+            results=results_data,
+            total_results=len(results_data),
+            search_time_ms=search_time_ms,
+            confidence_filtered_count=confidence_filtered_count,
+            processing_status=processing_status,
+            search_strategy_used=search_strategy
+        )
+        
+    except Exception as e:
+        logger.error(f"Enhanced semantic search failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Enhanced semantic search failed: {str(e)}")
+
+@app.post("/search/related-content")
+async def search_related_content(
+    session_id: str,
+    selected_text: str,
+    document_ids: Optional[List[str]] = None
+):
+    """
+    Search for content related to selected text across processed documents.
+    
+    Requirements:
+    - 3.1: Find related content across all uploaded documents when text is selected
+    - 3.1.3: Semantic search across processed documents within 1 second
+    - 3.1.7: Maintain minimum 85% semantic relevance
+    """
+    # Validate session exists
+    session = get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found or expired")
+    
+    # Check if embedding service is initialized
+    if not embedding_service.is_initialized:
+        try:
+            await embedding_service.initialize()
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to initialize embedding service: {str(e)}")
+    
+    # Get document processing status
+    documents = session.get("documents", [])
+    processing_status = {}
+    available_document_ids = []
+    
+    for doc in documents:
+        doc_id = doc["document_id"]
+        is_processed = doc.get("processing_status") == "completed"
+        processing_status[doc_id] = is_processed
+        if is_processed:
+            available_document_ids.append(doc_id)
+    
+    # Filter document IDs if specified
+    if document_ids:
+        available_document_ids = [
+            doc_id for doc_id in document_ids 
+            if doc_id in available_document_ids
+        ]
+    
+    if not available_document_ids:
+        return {
+            "selected_text": selected_text,
+            "related_sections": [],
+            "total_results": 0,
+            "search_time_ms": 0.0,
+            "processing_status": processing_status,
+            "message": "No processed documents available for search"
+        }
+    
+    try:
+        start_time = time.time()
+        
+        # Print API request info to console
+        print(f"\n🌐 API REQUEST: Related Content Search")
+        print(f"   Session: {session_id}")
+        print(f"   Selected Text: '{selected_text[:100]}{'...' if len(selected_text) > 100 else ''}'")
+        print(f"   Documents: {len(available_document_ids)} available")
+        
+        # Use search engine for related content search
+        related_results = await search_engine.search_related_content(
+            selected_text=selected_text,
+            document_ids=available_document_ids,
+            processing_status=processing_status
+        )
+        
+        search_time_ms = (time.time() - start_time) * 1000
+        
+        # Convert results to response format
+        related_sections = []
+        for result in related_results:
+            section_data = {
+                "section_id": result.section_id,
+                "document_id": result.document_id,
+                "snippet": result.snippet,
+                "similarity_score": result.similarity_score,
+                "confidence_score": result.confidence_score,
+                "page_number": result.page_number,
+                "section_type": result.section_type,
+                "related_sections": result.related_sections
+            }
+            related_sections.append(section_data)
+        
+        # Add processing status note if some documents are still processing
+        processing_note = ""
+        still_processing = [doc_id for doc_id, is_processed in processing_status.items() if not is_processed]
+        if still_processing:
+            processing_note = f"Note: {len(still_processing)} documents are still processing and not included in search results."
+        
+        return {
+            "selected_text": selected_text,
+            "related_sections": related_sections,
+            "total_results": len(related_sections),
+            "search_time_ms": search_time_ms,
+            "processing_status": processing_status,
+            "processing_note": processing_note,
+            "meets_time_target": search_time_ms <= 1000,  # 1 second target
+            "confidence_threshold": search_engine.strategy.confidence_threshold
+        }
+        
+    except Exception as e:
+        logger.error(f"Related content search failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Related content search failed: {str(e)}")
+
+@app.get("/search/cache/stats")
+async def get_search_cache_stats():
+    """
+    Get search cache statistics and performance metrics.
+    
+    Requirements:
+    - 6.6: Response caching for performance optimization
+    - 6.2: Cache hit rate monitoring
+    """
+    stats = search_engine.get_stats()
+    
+    return {
+        "cache_stats": {
+            "cache_size": stats["cache_size"],
+            "cache_hit_rate": stats["cache_hit_rate"],
+            "total_searches": stats["total_searches"],
+            "cache_hits": stats["cache_hits"]
+        },
+        "performance_stats": {
+            "average_search_time_ms": stats["average_search_time_ms"],
+            "fast_tier_searches": stats["fast_tier_searches"],
+            "precision_tier_searches": stats["precision_tier_searches"],
+            "precision_search_rate": stats["precision_search_rate"]
+        },
+        "quality_stats": {
+            "confidence_threshold": stats["confidence_threshold"],
+            "confidence_filtered_results": stats["confidence_filtered_results"]
+        }
+    }
+
+@app.delete("/search/cache")
+async def clear_search_cache():
+    """
+    Clear the search cache (useful for testing or memory management).
+    
+    Requirements:
+    - 6.6: Cache management for performance optimization
+    """
+    search_engine.clear_cache()
+    
+    return {
+        "message": "Search cache cleared successfully",
+        "timestamp": datetime.now()
     }
 
 @app.get("/static/{file_path:path}")

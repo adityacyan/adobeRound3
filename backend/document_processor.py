@@ -19,6 +19,9 @@ import re
 import fitz  # PyMuPDF
 from pydantic import BaseModel
 
+# Import embedding service for background embedding generation
+from .embedding_service import embedding_service
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -54,6 +57,8 @@ class ProcessedDocument(BaseModel):
     sections: List[DocumentSection]
     metadata: Dict
     quality_score: float = 1.0
+    embeddings_generated: bool = False
+    embedding_count: int = 0
 
 class DocumentProcessor:
     """Enhanced document processor with performance optimization."""
@@ -297,12 +302,39 @@ class DocumentProcessor:
             
             processing_time_ms = int((time.time() - start_time) * 1000)
             
+            # Generate embeddings in background
+            embeddings_generated = False
+            embedding_count = 0
+            
+            try:
+                self._notify_progress(ProcessingProgress(
+                    document_id=document_id,
+                    stage="embedding",
+                    progress=0.9,
+                    message="Generating embeddings for semantic search",
+                    timestamp=datetime.now()
+                ))
+                
+                # Convert sections to dict format for embedding service
+                sections_dict = [section.dict() for section in chunked_sections]
+                document_embeddings = await embedding_service.generate_document_embeddings(
+                    document_id, sections_dict
+                )
+                embeddings_generated = True
+                embedding_count = len(document_embeddings)
+                
+                logger.info(f"Generated {embedding_count} embeddings for document {document_id}")
+                
+            except Exception as e:
+                logger.warning(f"Failed to generate embeddings for document {document_id}: {e}")
+                # Continue without embeddings - this is not a critical failure
+            
             # Final progress update
             self._notify_progress(ProcessingProgress(
                 document_id=document_id,
                 stage="completed",
                 progress=1.0,
-                message=f"Processing completed in {processing_time_ms}ms",
+                message=f"Processing completed in {processing_time_ms}ms with {embedding_count} embeddings",
                 timestamp=datetime.now(),
                 processing_time_ms=processing_time_ms
             ))
@@ -322,9 +354,13 @@ class DocumentProcessor:
                     "quality_score": quality_score,
                     "original_sections": len(sections),
                     "chunked_sections": len(chunked_sections),
-                    "processing_timestamp": datetime.now().isoformat()
+                    "processing_timestamp": datetime.now().isoformat(),
+                    "embeddings_generated": embeddings_generated,
+                    "embedding_count": embedding_count
                 },
-                quality_score=quality_score
+                quality_score=quality_score,
+                embeddings_generated=embeddings_generated,
+                embedding_count=embedding_count
             )
             
         except Exception as e:
