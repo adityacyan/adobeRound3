@@ -17,6 +17,19 @@ const PDFViewer = ({
     setActiveDocumentId,
     onTextSelection
 }) => {
+    // Utility function to truncate text with ellipsis
+    const truncateText = (text, maxLength = 30) => {
+        if (!text) return '';
+        // Remove .pdf extension for cleaner display
+        let displayText = text.endsWith('.pdf') ? text.slice(0, -4) : text;
+        return displayText.length > maxLength ? displayText.substring(0, maxLength) + '...' : displayText;
+    };
+
+    // Get display title for document
+    const getDocumentTitle = (doc) => {
+        return doc.title || doc.original_filename || `Document ${doc.document_id.substring(0, 8)}`;
+    };
+
     const [loading, setLoading] = useState(false);
     const [selectedText, setSelectedText] = useState('');
     const [pdfBlobUrl, setPdfBlobUrl] = useState(null);
@@ -117,7 +130,7 @@ const PDFViewer = ({
 
             console.log('Rendering PDF with Adobe Embed API');
 
-            const fileName = activeDocument?.title || `document_${activeDocumentId.substring(0, 8)}.pdf`;
+            const fileName = getDocumentTitle(activeDocument);
 
             // Render the PDF
             adobeDCView.previewFile({
@@ -257,7 +270,7 @@ const PDFViewer = ({
     const zoomOut = () => {
         setScale(prev => Math.max(prev - 0.2, 0.5));
     };
-
+    // https://stackoverflow.com/questions/48950038/how-do-i-retrieve-text-from-user-selection-in-pdf-js
     // Advanced PDF.js text selection (similar to the method you mentioned)
     const getHighlightCoords = useCallback(() => {
         try {
@@ -376,8 +389,8 @@ const PDFViewer = ({
                             `}
                         >
                             <FileText className="h-4 w-4 mr-2 flex-shrink-0" />
-                            <span className="mr-2 truncate max-w-32">
-                                {doc.title || `Document ${doc.document_id.substring(0, 8)}`}
+                            <span className="mr-2 truncate max-w-32" title={getDocumentTitle(doc)}>
+                                {truncateText(getDocumentTitle(doc), 15)}
                             </span>
                             <div className="flex items-center ml-auto">
                                 {getStatusIcon(doc.processing_status)}
@@ -392,63 +405,69 @@ const PDFViewer = ({
 
             {/* PDF Controls */}
             {activeDocument && (
-                <div className="border-b border-gray-200 bg-gray-50 px-4 py-2 flex items-center justify-between flex-shrink-0">
-                    <div className="flex items-center space-x-4 text-sm text-gray-600">
-                        <span className="font-medium">📄 {activeDocument.title}</span>
-                        {useAdobeEmbed && adobeReady ? (
-                            <span className="text-red-600 font-medium">🔥 Adobe PDF Embed</span>
-                        ) : (
-                            <span className="text-blue-600 font-medium">📚 PDF.js Viewer</span>
-                        )}
-                        {numPages && !useAdobeEmbed && <span>📊 {numPages} pages</span>}
+                <div className="border-b border-gray-200 bg-gray-50 px-4 py-1.5 flex items-center justify-between flex-shrink-0 h-12">
+                    {/* Left side - Document title only */}
+                    <div className="flex items-center text-xs text-gray-600 min-w-0 flex-1">
+                        <span className="font-medium truncate" title={getDocumentTitle(activeDocument)}>
+                            📄 {truncateText(getDocumentTitle(activeDocument), 25)}
+                        </span>
                     </div>
-                    <div className="flex items-center space-x-2">
+                    
+                    {/* Right side - All controls and indicators */}
+                    <div className="flex items-center space-x-1.5">
+                        {/* Viewer type and page count indicators */}
+                        {useAdobeEmbed && adobeReady ? (
+                            <span className="text-red-600 text-xs font-medium">🔥 Adobe</span>
+                        ) : (
+                            <span className="text-blue-600 text-xs font-medium">📚 PDF.js</span>
+                        )}
+                        {numPages && !useAdobeEmbed && <span className="text-xs text-gray-500">📊 {numPages} pages</span>}
                         {/* PDF.js Navigation controls */}
                         {!useAdobeEmbed && numPages && numPages > 1 && (
-                            <div className="flex items-center space-x-1 border rounded-lg px-2 py-1 bg-white">
+                            <div className="flex items-center space-x-1 border rounded px-1.5 py-0.5 bg-white h-8">
                                 <button
                                     onClick={goToPrevPage}
                                     disabled={pageNumber <= 1}
-                                    className="p-1 hover:bg-gray-100 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="p-0.5 hover:bg-gray-100 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                                     title="Previous page"
                                 >
-                                    <ChevronLeft className="h-4 w-4" />
+                                    <ChevronLeft className="h-3 w-3" />
                                 </button>
-                                <span className="text-sm px-2">
-                                    {pageNumber} / {numPages}
+                                <span className="text-xs px-1 min-w-[2.5rem] text-center">
+                                    {pageNumber}/{numPages}
                                 </span>
                                 <button
                                     onClick={goToNextPage}
                                     disabled={pageNumber >= numPages}
-                                    className="p-1 hover:bg-gray-100 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="p-0.5 hover:bg-gray-100 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                                     title="Next page"
                                 >
-                                    <ChevronRight className="h-4 w-4" />
+                                    <ChevronRight className="h-3 w-3" />
                                 </button>
                             </div>
                         )}
 
                         {/* PDF.js Zoom controls */}
                         {!useAdobeEmbed && (
-                            <div className="flex items-center space-x-1 border rounded-lg px-2 py-1 bg-white">
+                            <div className="flex items-center space-x-1 border rounded px-1.5 py-0.5 bg-white h-8">
                                 <button
                                     onClick={zoomOut}
                                     disabled={scale <= 0.5}
-                                    className="p-1 hover:bg-gray-100 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="p-0.5 hover:bg-gray-100 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                                     title="Zoom out"
                                 >
-                                    <ZoomOut className="h-4 w-4" />
+                                    <ZoomOut className="h-3 w-3" />
                                 </button>
-                                <span className="text-sm px-2 min-w-[3rem] text-center">
+                                <span className="text-xs px-1 min-w-[2.5rem] text-center">
                                     {Math.round(scale * 100)}%
                                 </span>
                                 <button
                                     onClick={zoomIn}
                                     disabled={scale >= 3.0}
-                                    className="p-1 hover:bg-gray-100 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="p-0.5 hover:bg-gray-100 rounded disabled:opacity-50 disabled:cursor-not-allowed"
                                     title="Zoom in"
                                 >
-                                    <ZoomIn className="h-4 w-4" />
+                                    <ZoomIn className="h-3 w-3" />
                                 </button>
                             </div>
                         )}
@@ -460,10 +479,10 @@ const PDFViewer = ({
                                     setUseAdobeEmbed(!useAdobeEmbed);
                                     setLoading(true);
                                 }}
-                                className="px-3 py-1 bg-purple-500 text-white text-xs rounded hover:bg-purple-600 transition-colors"
+                                className="px-2 py-1 bg-purple-500 text-white text-xs rounded hover:bg-purple-600 transition-colors h-8 flex items-center"
                                 title="Toggle between Adobe and PDF.js"
                             >
-                                {useAdobeEmbed ? '📚 Use PDF.js' : '🔥 Use Adobe'}
+                                {useAdobeEmbed ? '📚' : '🔥'}
                             </button>
                         )}
 
@@ -474,7 +493,7 @@ const PDFViewer = ({
                                     href={pdfBlobUrl}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="px-3 py-1 bg-gray-500 text-white text-xs rounded hover:bg-gray-600 transition-colors flex items-center"
+                                    className="px-2 py-1 bg-gray-500 text-white text-xs rounded hover:bg-gray-600 transition-colors flex items-center h-8"
                                     title="Open in new tab"
                                 >
                                     <ExternalLink className="h-3 w-3 mr-1" />
@@ -482,8 +501,8 @@ const PDFViewer = ({
                                 </a>
                                 <a
                                     href={pdfBlobUrl}
-                                    download={activeDocument.title || 'document.pdf'}
-                                    className="px-3 py-1 bg-green-500 text-white text-xs rounded hover:bg-green-600 transition-colors flex items-center"
+                                    download={getDocumentTitle(activeDocument) || 'document.pdf'}
+                                    className="px-2 py-1 bg-green-500 text-white text-xs rounded hover:bg-green-600 transition-colors flex items-center h-8"
                                     title="Download PDF"
                                 >
                                     <Download className="h-3 w-3 mr-1" />
@@ -594,8 +613,8 @@ const PDFViewer = ({
                         {/* Text Selection Indicator */}
                         {selectedText && (
                             <div className={`fixed top-20 left-4 px-4 py-3 rounded-lg shadow-lg text-sm max-w-xs z-50 border-2 ${useAdobeEmbed
-                                    ? 'bg-red-500 bg-opacity-95 text-white border-red-600'
-                                    : 'bg-blue-500 bg-opacity-95 text-white border-blue-600'
+                                ? 'bg-red-500 bg-opacity-95 text-white border-red-600'
+                                : 'bg-blue-500 bg-opacity-95 text-white border-blue-600'
                                 }`}>
                                 <div className="font-medium flex items-center">
                                     <CheckCircle className="h-4 w-4 mr-2" />

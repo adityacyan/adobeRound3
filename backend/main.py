@@ -51,6 +51,7 @@ class DocumentMetadata(BaseModel):
     document_id: str
     filename: str
     original_filename: str
+    title: Optional[str] = None  # Display title for frontend
     file_path: str
     file_size: int
     upload_timestamp: datetime
@@ -241,6 +242,7 @@ async def save_uploaded_file(file: UploadFile, session_id: str) -> DocumentMetad
             document_id=document_id,
             filename=safe_filename,
             original_filename=file.filename,
+            title=file.filename,  # Set title to original filename for display
             file_path=file_path,
             file_size=len(content),
             upload_timestamp=datetime.now(),
@@ -725,6 +727,11 @@ async def get_session_documents(session_id: str):
     
     documents = session.get("documents", [])
     
+    # Add title field to documents for frontend display
+    for doc in documents:
+        if "title" not in doc and "original_filename" in doc:
+            doc["title"] = doc["original_filename"]
+    
     # Calculate overall progress
     total_docs = len(documents)
     if total_docs == 0:
@@ -758,6 +765,10 @@ async def get_document_info(session_id: str, document_id: str):
     
     if not document:
         raise HTTPException(status_code=404, detail="Document not found in session")
+    
+    # Add title field for frontend display
+    if "title" not in document and "original_filename" in document:
+        document["title"] = document["original_filename"]
     
     # Add file existence check
     file_exists = os.path.exists(document.get("file_path", ""))
