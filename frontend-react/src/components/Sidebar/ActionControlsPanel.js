@@ -193,7 +193,7 @@ const ActionControlsPanel = ({
                     </div>
 
                     {/* Document Info */}
-                    <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                    {/* <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
                         <h4 className="font-medium text-gray-700 mb-3">Document Info</h4>
                         <div className="space-y-2 text-sm">
                             <div className="flex justify-between">
@@ -228,7 +228,7 @@ const ActionControlsPanel = ({
                                 </span>
                             </div>
                         </div>
-                    </div>
+                    </div> */}
 
                     {/* Quick Actions */}
                     <div className="bg-white border border-gray-200 rounded-lg p-4">

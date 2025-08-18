@@ -412,7 +412,7 @@ const PDFViewer = ({
                             📄 {truncateText(getDocumentTitle(activeDocument), 25)}
                         </span>
                     </div>
-                    
+
                     {/* Right side - All controls and indicators */}
                     <div className="flex items-center space-x-1.5">
                         {/* Viewer type and page count indicators */}
