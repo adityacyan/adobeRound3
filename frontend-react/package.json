@@ -22,9 +22,9 @@
         "web-vitals": "^2.1.4"
     },
     "scripts": {
-        "start": "react-scripts start",
-        "start:dev": "react-scripts start",
-        "build": "react-scripts build",
+        "start": "powershell -ExecutionPolicy Bypass -File sync-env.ps1 && react-scripts start",
+        "start:dev": "powershell -ExecutionPolicy Bypass -File sync-env.ps1 && react-scripts start",
+        "build": "powershell -ExecutionPolicy Bypass -File sync-env.ps1 && react-scripts build",
         "test": "react-scripts test",
         "eject": "react-scripts eject"
     },

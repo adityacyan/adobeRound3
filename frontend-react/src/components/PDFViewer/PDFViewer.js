@@ -7,8 +7,8 @@ import 'react-pdf/dist/esm/Page/TextLayer.css';
 // Set up PDF.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
 
-// Adobe Client ID - you can set this in your .env file as ADOBE_PDF_EMBED_KEY
-const ADOBE_CLIENT_ID = process.env.ADOBE_PDF_EMBED_KEY || "YOUR_CLIENT_ID_HERE";
+// Adobe Client ID - you can set this in your .env file as REACT_APP_ADOBE_CLIENT_ID
+const ADOBE_CLIENT_ID = process.env.REACT_APP_ADOBE_CLIENT_ID || "YOUR_CLIENT_ID_HERE";
 
 const PDFViewer = ({
     sessionId,
@@ -48,9 +48,12 @@ const PDFViewer = ({
 
     // Initialize Adobe PDF Embed API
     useEffect(() => {
+        console.log('Adobe initialization - Client ID:', ADOBE_CLIENT_ID);
+        console.log('Adobe initialization - window.AdobeDC available:', !!window.AdobeDC);
+
         const initializeAdobe = () => {
             if (window.AdobeDC && !adobeReady && ADOBE_CLIENT_ID !== "YOUR_CLIENT_ID_HERE") {
-                console.log('Adobe PDF Embed API loaded');
+                console.log('Adobe PDF Embed API loaded successfully');
                 setAdobeReady(true);
             } else if (ADOBE_CLIENT_ID === "YOUR_CLIENT_ID_HERE") {
                 console.log('Adobe Client ID not configured, using PDF.js fallback');
@@ -61,13 +64,18 @@ const PDFViewer = ({
 
         // Check if Adobe is already loaded
         if (window.AdobeDC && ADOBE_CLIENT_ID !== "YOUR_CLIENT_ID_HERE") {
+            console.log('Adobe already loaded, initializing...');
             initializeAdobe();
         } else if (ADOBE_CLIENT_ID === "YOUR_CLIENT_ID_HERE") {
+            console.log('No Adobe Client ID provided, falling back to PDF.js');
             setUseAdobeEmbed(false);
         } else {
+            console.log('Waiting for Adobe PDF Embed API to load...');
             // Wait for Adobe to load
             const checkInterval = setInterval(() => {
+                console.log('Checking for Adobe API...', !!window.AdobeDC);
                 if (window.AdobeDC) {
+                    console.log('Adobe API detected, initializing...');
                     initializeAdobe();
                     clearInterval(checkInterval);
                 }
@@ -76,7 +84,7 @@ const PDFViewer = ({
             // Fallback to PDF.js after 5 seconds
             setTimeout(() => {
                 if (!adobeReady) {
-                    console.log('Adobe PDF Embed API failed to load, falling back to PDF.js');
+                    console.log('Adobe PDF Embed API failed to load after 5 seconds, falling back to PDF.js');
                     setUseAdobeEmbed(false);
                     clearInterval(checkInterval);
                 }
@@ -412,7 +420,7 @@ const PDFViewer = ({
                             📄 {truncateText(getDocumentTitle(activeDocument), 25)}
                         </span>
                     </div>
-                    
+
                     {/* Right side - All controls and indicators */}
                     <div className="flex items-center space-x-1.5">
                         {/* Viewer type and page count indicators */}
