@@ -7,6 +7,9 @@ import 'react-pdf/dist/esm/Page/TextLayer.css';
 // Set up PDF.js worker
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.js`;
 
+// Adobe Client ID - you can set this in your .env file as ADOBE_PDF_EMBED_KEY
+const ADOBE_CLIENT_ID = process.env.ADOBE_PDF_EMBED_KEY || "YOUR_CLIENT_ID_HERE";
+
 const PDFViewer = ({
     sessionId,
     documents,
@@ -17,25 +20,159 @@ const PDFViewer = ({
     const [loading, setLoading] = useState(false);
     const [selectedText, setSelectedText] = useState('');
     const [pdfBlobUrl, setPdfBlobUrl] = useState(null);
+    const [pdfError, setPdfError] = useState(null);
+    const [adobeViewer, setAdobeViewer] = useState(null);
+    const [adobeReady, setAdobeReady] = useState(false);
+    const [useAdobeEmbed, setUseAdobeEmbed] = useState(true);
     const [numPages, setNumPages] = useState(null);
     const [pageNumber, setPageNumber] = useState(1);
     const [scale, setScale] = useState(1.2);
-    const [pdfError, setPdfError] = useState(null);
-    const containerRef = useRef(null);
-    const pageRefs = useRef([]);
+    const adobeContainerRef = useRef(null);
+    const pdfJsContainerRef = useRef(null);
+    const currentDocumentRef = useRef(null);
 
     const activeDocument = documents.find(doc => doc.document_id === activeDocumentId);
+
+    // Initialize Adobe PDF Embed API
+    useEffect(() => {
+        const initializeAdobe = () => {
+            if (window.AdobeDC && !adobeReady && ADOBE_CLIENT_ID !== "YOUR_CLIENT_ID_HERE") {
+                console.log('Adobe PDF Embed API loaded');
+                setAdobeReady(true);
+            } else if (ADOBE_CLIENT_ID === "YOUR_CLIENT_ID_HERE") {
+                console.log('Adobe Client ID not configured, using PDF.js fallback');
+                setUseAdobeEmbed(false);
+                setAdobeReady(false);
+            }
+        };
+
+        // Check if Adobe is already loaded
+        if (window.AdobeDC && ADOBE_CLIENT_ID !== "YOUR_CLIENT_ID_HERE") {
+            initializeAdobe();
+        } else if (ADOBE_CLIENT_ID === "YOUR_CLIENT_ID_HERE") {
+            setUseAdobeEmbed(false);
+        } else {
+            // Wait for Adobe to load
+            const checkInterval = setInterval(() => {
+                if (window.AdobeDC) {
+                    initializeAdobe();
+                    clearInterval(checkInterval);
+                }
+            }, 100);
+
+            // Fallback to PDF.js after 5 seconds
+            setTimeout(() => {
+                if (!adobeReady) {
+                    console.log('Adobe PDF Embed API failed to load, falling back to PDF.js');
+                    setUseAdobeEmbed(false);
+                    clearInterval(checkInterval);
+                }
+            }, 5000);
+        }
+    }, [adobeReady]);
 
     useEffect(() => {
         if (activeDocumentId && sessionId) {
             setLoading(true);
-            setPageNumber(1);
             setPdfError(null);
-            fetchPdfAsBlob();
+            setPageNumber(1);
+            if (useAdobeEmbed && adobeReady) {
+                fetchPdfAndRenderAdobe();
+            } else {
+                fetchPdfAndRenderPdfJs();
+            }
         }
-    }, [activeDocumentId, sessionId]);
+    }, [activeDocumentId, sessionId, adobeReady, useAdobeEmbed]);
 
-    const fetchPdfAsBlob = async () => {
+    const fetchPdfAndRenderAdobe = async () => {
+        if (!activeDocumentId || !sessionId || !adobeReady) return;
+
+        try {
+            // Clear previous viewer
+            if (adobeViewer) {
+                console.log('Clearing previous Adobe viewer');
+            }
+
+            const url = `http://localhost:8000/session/${sessionId}/documents/${activeDocumentId}/pdf`;
+            console.log('Fetching PDF from:', url);
+
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
+            const arrayBuffer = await response.arrayBuffer();
+
+            // Clear the container
+            if (adobeContainerRef.current) {
+                adobeContainerRef.current.innerHTML = '';
+            }
+
+            // Configure Adobe PDF Embed
+            const adobeDCView = new window.AdobeDC.View({
+                clientId: ADOBE_CLIENT_ID,
+                divId: "adobe-dc-view",
+                locale: "en-US"
+            });
+
+            console.log('Rendering PDF with Adobe Embed API');
+
+            const fileName = activeDocument?.title || `document_${activeDocumentId.substring(0, 8)}.pdf`;
+
+            // Render the PDF
+            adobeDCView.previewFile({
+                content: { promise: Promise.resolve(arrayBuffer) },
+                metaData: { fileName: fileName }
+            }, {
+                embedMode: "SIZED_CONTAINER",
+                showAnnotationTools: false,
+                showLeftHandPanel: true,
+                showDownloadPDF: false,
+                showPrintPDF: false,
+                showZoomControl: true,
+                defaultViewMode: "FIT_WIDTH",
+                enableFormFilling: false
+            });
+
+            // Set up text selection listeners
+            adobeDCView.registerCallback(
+                window.AdobeDC.View.Enum.CallbackType.TEXT_SELECTION,
+                (textSelectionEvent) => {
+                    console.log('Adobe text selection event:', textSelectionEvent);
+
+                    if (textSelectionEvent.data && textSelectionEvent.data.text) {
+                        const text = textSelectionEvent.data.text.trim();
+                        if (text.length > 2) {
+                            console.log('Selected text:', text);
+                            setSelectedText(text);
+
+                            if (onTextSelection) {
+                                onTextSelection(text);
+                            }
+                        }
+                    }
+                },
+                { enablePDFAnalytics: false }
+            );
+
+            // Save references
+            setAdobeViewer(adobeDCView);
+            currentDocumentRef.current = activeDocumentId;
+
+            setPdfError(null);
+            console.log('Adobe PDF rendered successfully');
+
+        } catch (error) {
+            console.error('Failed to fetch/render PDF with Adobe:', error);
+            console.log('Falling back to PDF.js');
+            setUseAdobeEmbed(false);
+            fetchPdfAndRenderPdfJs();
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const fetchPdfAndRenderPdfJs = async () => {
         if (!activeDocumentId || !sessionId) return;
 
         try {
@@ -51,9 +188,9 @@ const PDFViewer = ({
             setPdfBlobUrl(blobUrl);
             setPdfError(null);
 
-            console.log('PDF fetched as blob successfully');
+            console.log('PDF fetched for PDF.js successfully');
         } catch (error) {
-            console.error('Failed to fetch PDF as blob:', error);
+            console.error('Failed to fetch PDF:', error);
             setPdfError(error.message);
             setPdfBlobUrl(null);
         } finally {
@@ -71,7 +208,7 @@ const PDFViewer = ({
     }, [pdfBlobUrl]);
 
     const handleTabClick = (documentId) => {
-        // Cleanup current blob URL
+        // Cleanup current resources
         if (pdfBlobUrl) {
             URL.revokeObjectURL(pdfBlobUrl);
             setPdfBlobUrl(null);
@@ -79,24 +216,32 @@ const PDFViewer = ({
 
         setActiveDocumentId(documentId);
         setSelectedText('');
+        setPdfError(null);
         setPageNumber(1);
         setNumPages(null);
-        setPdfError(null);
+
+        // Clear the Adobe container
+        if (adobeContainerRef.current) {
+            adobeContainerRef.current.innerHTML = '';
+        }
+        setAdobeViewer(null);
     };
 
+    // PDF.js Document load handlers
     const onDocumentLoadSuccess = ({ numPages }) => {
         setNumPages(numPages);
         setLoading(false);
         setPdfError(null);
-        console.log(`PDF loaded with ${numPages} pages`);
+        console.log(`PDF.js loaded with ${numPages} pages`);
     };
 
     const onDocumentLoadError = (error) => {
-        console.error('PDF load error:', error);
+        console.error('PDF.js load error:', error);
         setPdfError(error.message || 'Failed to load PDF');
         setLoading(false);
     };
 
+    // PDF.js navigation controls
     const goToPrevPage = () => {
         setPageNumber(prev => Math.max(prev - 1, 1));
     };
@@ -113,48 +258,78 @@ const PDFViewer = ({
         setScale(prev => Math.max(prev - 0.2, 0.5));
     };
 
-    // Handle text selection from PDF
-    const handleTextSelection = useCallback(() => {
-        const selection = window.getSelection();
-        const selectedText = selection.toString().trim();
+    // Advanced PDF.js text selection (similar to the method you mentioned)
+    const getHighlightCoords = useCallback(() => {
+        try {
+            const selection = window.getSelection();
+            if (!selection.rangeCount) return null;
 
-        if (selectedText && selectedText.length > 2) {
-            console.log('Text selected from PDF:', selectedText);
-            setSelectedText(selectedText);
+            const range = selection.getRangeAt(0);
+            const selectedText = selection.toString().trim();
+
+            if (!selectedText || selectedText.length < 2) return null;
+
+            const rects = range.getClientRects();
+            if (rects.length === 0) return null;
+
+            console.log('PDF.js text selection detected:', {
+                text: selectedText,
+                pageNumber: pageNumber,
+                rects: Array.from(rects).map(rect => ({
+                    left: rect.left,
+                    top: rect.top,
+                    right: rect.right,
+                    bottom: rect.bottom
+                }))
+            });
+
+            return {
+                text: selectedText,
+                pageNumber: pageNumber,
+                rects: Array.from(rects)
+            };
+        } catch (error) {
+            console.error('Error getting highlight coords:', error);
+            return null;
+        }
+    }, [pageNumber]);
+
+    // Enhanced text selection for PDF.js with coordinate tracking
+    const handlePdfJsTextSelection = useCallback(() => {
+        const coords = getHighlightCoords();
+        if (coords && coords.text) {
+            console.log('PDF.js text selected:', coords.text);
+            setSelectedText(coords.text);
 
             if (onTextSelection) {
-                onTextSelection(selectedText);
+                onTextSelection(coords.text, {
+                    pageNumber: coords.pageNumber,
+                    coordinates: coords.rects
+                });
             }
-
-            // Clear the visual selection after processing (but keep the text value)
-            setTimeout(() => {
-                if (window.getSelection) {
-                    window.getSelection().removeAllRanges();
-                }
-            }, 100);
         }
-    }, [onTextSelection]);
+    }, [getHighlightCoords, onTextSelection]);
 
-    // Set up text selection listener for PDF text layer
+    // Set up text selection listeners for PDF.js
     useEffect(() => {
-        const handleMouseUp = (event) => {
-            // Small delay to ensure selection is complete
-            setTimeout(handleTextSelection, 50);
-        };
+        if (!useAdobeEmbed) {
+            const handleMouseUp = (event) => {
+                setTimeout(handlePdfJsTextSelection, 50);
+            };
 
-        const handleSelectionChange = () => {
-            // Handle ongoing text selection
-            setTimeout(handleTextSelection, 10);
-        };
+            const handleSelectionChange = () => {
+                setTimeout(handlePdfJsTextSelection, 10);
+            };
 
-        document.addEventListener('mouseup', handleMouseUp);
-        document.addEventListener('selectionchange', handleSelectionChange);
-        
-        return () => {
-            document.removeEventListener('mouseup', handleMouseUp);
-            document.removeEventListener('selectionchange', handleSelectionChange);
-        };
-    }, [handleTextSelection]);
+            document.addEventListener('mouseup', handleMouseUp);
+            document.addEventListener('selectionchange', handleSelectionChange);
+
+            return () => {
+                document.removeEventListener('mouseup', handleMouseUp);
+                document.removeEventListener('selectionchange', handleSelectionChange);
+            };
+        }
+    }, [handlePdfJsTextSelection, useAdobeEmbed]);
 
     const getStatusIcon = (status) => {
         switch (status) {
@@ -220,11 +395,16 @@ const PDFViewer = ({
                 <div className="border-b border-gray-200 bg-gray-50 px-4 py-2 flex items-center justify-between flex-shrink-0">
                     <div className="flex items-center space-x-4 text-sm text-gray-600">
                         <span className="font-medium">📄 {activeDocument.title}</span>
-                        {numPages && <span>📊 {numPages} pages</span>}
+                        {useAdobeEmbed && adobeReady ? (
+                            <span className="text-red-600 font-medium">🔥 Adobe PDF Embed</span>
+                        ) : (
+                            <span className="text-blue-600 font-medium">📚 PDF.js Viewer</span>
+                        )}
+                        {numPages && !useAdobeEmbed && <span>📊 {numPages} pages</span>}
                     </div>
                     <div className="flex items-center space-x-2">
-                        {/* Navigation controls */}
-                        {numPages && numPages > 1 && (
+                        {/* PDF.js Navigation controls */}
+                        {!useAdobeEmbed && numPages && numPages > 1 && (
                             <div className="flex items-center space-x-1 border rounded-lg px-2 py-1 bg-white">
                                 <button
                                     onClick={goToPrevPage}
@@ -247,29 +427,45 @@ const PDFViewer = ({
                                 </button>
                             </div>
                         )}
-                        
-                        {/* Zoom controls */}
-                        <div className="flex items-center space-x-1 border rounded-lg px-2 py-1 bg-white">
+
+                        {/* PDF.js Zoom controls */}
+                        {!useAdobeEmbed && (
+                            <div className="flex items-center space-x-1 border rounded-lg px-2 py-1 bg-white">
+                                <button
+                                    onClick={zoomOut}
+                                    disabled={scale <= 0.5}
+                                    className="p-1 hover:bg-gray-100 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                                    title="Zoom out"
+                                >
+                                    <ZoomOut className="h-4 w-4" />
+                                </button>
+                                <span className="text-sm px-2 min-w-[3rem] text-center">
+                                    {Math.round(scale * 100)}%
+                                </span>
+                                <button
+                                    onClick={zoomIn}
+                                    disabled={scale >= 3.0}
+                                    className="p-1 hover:bg-gray-100 rounded disabled:opacity-50 disabled:cursor-not-allowed"
+                                    title="Zoom in"
+                                >
+                                    <ZoomIn className="h-4 w-4" />
+                                </button>
+                            </div>
+                        )}
+
+                        {/* Viewer toggle button */}
+                        {window.AdobeDC && ADOBE_CLIENT_ID !== "YOUR_CLIENT_ID_HERE" && (
                             <button
-                                onClick={zoomOut}
-                                disabled={scale <= 0.5}
-                                className="p-1 hover:bg-gray-100 rounded disabled:opacity-50 disabled:cursor-not-allowed"
-                                title="Zoom out"
+                                onClick={() => {
+                                    setUseAdobeEmbed(!useAdobeEmbed);
+                                    setLoading(true);
+                                }}
+                                className="px-3 py-1 bg-purple-500 text-white text-xs rounded hover:bg-purple-600 transition-colors"
+                                title="Toggle between Adobe and PDF.js"
                             >
-                                <ZoomOut className="h-4 w-4" />
+                                {useAdobeEmbed ? '📚 Use PDF.js' : '🔥 Use Adobe'}
                             </button>
-                            <span className="text-sm px-2 min-w-[3rem] text-center">
-                                {Math.round(scale * 100)}%
-                            </span>
-                            <button
-                                onClick={zoomIn}
-                                disabled={scale >= 3.0}
-                                className="p-1 hover:bg-gray-100 rounded disabled:opacity-50 disabled:cursor-not-allowed"
-                                title="Zoom in"
-                            >
-                                <ZoomIn className="h-4 w-4" />
-                            </button>
-                        </div>
+                        )}
 
                         {/* External links */}
                         {pdfBlobUrl && (
@@ -300,12 +496,14 @@ const PDFViewer = ({
             )}
 
             {/* PDF Display Area */}
-            <div className="flex-1 relative overflow-auto bg-gray-100">
+            <div className="flex-1 relative overflow-hidden bg-gray-100">
                 {loading ? (
                     <div className="absolute inset-0 flex items-center justify-center bg-gray-50">
                         <div className="text-center">
                             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-                            <p className="text-gray-600">Loading PDF...</p>
+                            <p className="text-gray-600">
+                                Loading PDF with {useAdobeEmbed ? 'Adobe Embed' : 'PDF.js'}...
+                            </p>
                         </div>
                     </div>
                 ) : pdfError ? (
@@ -315,80 +513,101 @@ const PDFViewer = ({
                             <h3 className="text-lg font-medium text-gray-700 mb-2">Error Loading PDF</h3>
                             <p className="text-red-600 mb-4">{pdfError}</p>
                             <button
-                                onClick={() => fetchPdfAsBlob()}
+                                onClick={() => {
+                                    if (useAdobeEmbed) {
+                                        fetchPdfAndRenderAdobe();
+                                    } else {
+                                        fetchPdfAndRenderPdfJs();
+                                    }
+                                }}
                                 className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 transition-colors"
                             >
                                 Retry
                             </button>
                         </div>
                     </div>
-                ) : pdfBlobUrl && activeDocument ? (
-                    <div className="h-full flex flex-col items-center pt-4">
-                        <Document
-                            file={pdfBlobUrl}
-                            onLoadSuccess={onDocumentLoadSuccess}
-                            onLoadError={onDocumentLoadError}
-                            loading={
-                                <div className="flex items-center justify-center py-8">
-                                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
-                                    <span className="ml-2 text-gray-600">Loading PDF...</span>
-                                </div>
-                            }
-                            error={
-                                <div className="flex items-center justify-center py-8">
-                                    <AlertCircle className="h-8 w-8 text-red-500 mr-2" />
-                                    <span className="text-red-600">Failed to load PDF</span>
-                                </div>
-                            }
-                            noData={
-                                <div className="flex items-center justify-center py-8">
-                                    <FileText className="h-8 w-8 text-gray-400 mr-2" />
-                                    <span className="text-gray-600">No PDF data</span>
-                                </div>
-                            }
-                            className="pdf-document"
-                        >
-                            <Page
-                                pageNumber={pageNumber}
-                                scale={scale}
-                                renderTextLayer={true}
-                                renderAnnotationLayer={true}
-                                className="pdf-page shadow-lg mb-4 mx-auto"
-                                canvasBackground="white"
-                                loading={
-                                    <div className="flex items-center justify-center py-8">
-                                        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
-                                        <span className="ml-2 text-gray-600">Loading page {pageNumber}...</span>
-                                    </div>
-                                }
-                                error={
-                                    <div className="flex items-center justify-center py-8">
-                                        <AlertCircle className="h-6 w-6 text-red-500 mr-2" />
-                                        <span className="text-red-600">Failed to load page {pageNumber}</span>
-                                    </div>
-                                }
-                                noData={
-                                    <div className="flex items-center justify-center py-8">
-                                        <FileText className="h-6 w-6 text-gray-400 mr-2" />
-                                        <span className="text-gray-600">No page data</span>
-                                    </div>
-                                }
-                            />
-                        </Document>
+                ) : activeDocument ? (
+                    <div className="h-full relative">
+                        {/* Adobe PDF Embed Viewer */}
+                        {useAdobeEmbed && adobeReady ? (
+                            <div className="h-full">
+                                <div
+                                    id="adobe-dc-view"
+                                    ref={adobeContainerRef}
+                                    className="w-full h-full"
+                                    style={{ minHeight: '600px' }}
+                                />
+                            </div>
+                        ) : null}
+
+                        {/* PDF.js Viewer */}
+                        {!useAdobeEmbed && pdfBlobUrl ? (
+                            <div className="h-full flex flex-col items-center pt-4 overflow-auto">
+                                <Document
+                                    file={pdfBlobUrl}
+                                    onLoadSuccess={onDocumentLoadSuccess}
+                                    onLoadError={onDocumentLoadError}
+                                    loading={
+                                        <div className="flex items-center justify-center py-8">
+                                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                                            <span className="ml-2 text-gray-600">Loading PDF.js...</span>
+                                        </div>
+                                    }
+                                    error={
+                                        <div className="flex items-center justify-center py-8">
+                                            <AlertCircle className="h-8 w-8 text-red-500 mr-2" />
+                                            <span className="text-red-600">Failed to load with PDF.js</span>
+                                        </div>
+                                    }
+                                    noData={
+                                        <div className="flex items-center justify-center py-8">
+                                            <FileText className="h-8 w-8 text-gray-400 mr-2" />
+                                            <span className="text-gray-600">No PDF data</span>
+                                        </div>
+                                    }
+                                    className="pdf-document"
+                                >
+                                    <Page
+                                        pageNumber={pageNumber}
+                                        scale={scale}
+                                        renderTextLayer={true}
+                                        renderAnnotationLayer={true}
+                                        className="pdf-page shadow-lg mb-4 mx-auto"
+                                        canvasBackground="white"
+                                        loading={
+                                            <div className="flex items-center justify-center py-8">
+                                                <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+                                                <span className="ml-2 text-gray-600">Loading page {pageNumber}...</span>
+                                            </div>
+                                        }
+                                        error={
+                                            <div className="flex items-center justify-center py-8">
+                                                <AlertCircle className="h-6 w-6 text-red-500 mr-2" />
+                                                <span className="text-red-600">Failed to load page {pageNumber}</span>
+                                            </div>
+                                        }
+                                    />
+                                </Document>
+                            </div>
+                        ) : null}
 
                         {/* Text Selection Indicator */}
                         {selectedText && (
-                            <div className="fixed top-20 left-4 bg-green-500 bg-opacity-95 text-white px-4 py-3 rounded-lg shadow-lg text-sm max-w-xs z-50">
+                            <div className={`fixed top-20 left-4 px-4 py-3 rounded-lg shadow-lg text-sm max-w-xs z-50 border-2 ${useAdobeEmbed
+                                    ? 'bg-red-500 bg-opacity-95 text-white border-red-600'
+                                    : 'bg-blue-500 bg-opacity-95 text-white border-blue-600'
+                                }`}>
                                 <div className="font-medium flex items-center">
                                     <CheckCircle className="h-4 w-4 mr-2" />
-                                    Text Selected
+                                    {useAdobeEmbed ? 'Adobe' : 'PDF.js'} Text Selected
                                 </div>
                                 <div className="text-xs opacity-90 mt-1 break-words">
                                     "{selectedText.length > 100 ? selectedText.substring(0, 100) + '...' : selectedText}"
                                 </div>
                                 <button
                                     onClick={() => setSelectedText('')}
-                                    className="absolute top-1 right-1 text-white hover:bg-green-600 rounded p-1"
+                                    className={`absolute top-1 right-1 text-white rounded p-1 ${useAdobeEmbed ? 'hover:bg-red-600' : 'hover:bg-blue-600'
+                                        }`}
                                 >
                                     ×
                                 </button>
@@ -415,12 +634,17 @@ const PDFViewer = ({
                                     </p>
                                 </div>
                             )}
+                            {!adobeReady && ADOBE_CLIENT_ID === "YOUR_CLIENT_ID_HERE" && (
+                                <div className="mt-4 p-3 bg-yellow-50 rounded-lg border border-yellow-200">
+                                    <p className="text-sm text-yellow-700">
+                                        ⚠️ Add your Adobe Client ID to use Adobe PDF Embed. Currently using PDF.js fallback.
+                                    </p>
+                                </div>
+                            )}
                         </div>
                     </div>
                 )}
-            </div>
-
-            {/* Footer with document status */}
+            </div>            {/* Footer with document status */}
             {activeDocument && (
                 <div className="border-t border-gray-200 bg-gray-50 px-4 py-2 flex-shrink-0">
                     <div className="flex items-center justify-between text-sm text-gray-600">
