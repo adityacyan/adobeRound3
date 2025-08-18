@@ -28,6 +28,7 @@ import re
 from .document_processor import document_processor, ProcessingProgress
 from .embedding_service import embedding_service, SearchResult
 from .search_engine import search_engine, EnhancedSearchResult, SearchContext
+from .llm_service import get_llm_service, InsightResponse
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -125,7 +126,12 @@ app = FastAPI(
 # Configure CORS for frontend integration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8080", "http://127.0.0.1:8080"],
+    allow_origins=[
+        "http://localhost:8080", 
+        "http://127.0.0.1:8080",
+        "http://localhost:3000",  # React development server
+        "http://127.0.0.1:3000"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -801,6 +807,42 @@ async def get_document_sections(session_id: str, document_id: str):
         "processing_method": document.get("processing_method"),
         "total_pages": document.get("total_pages"),
         "extracted_text_length": document.get("extracted_text_length")
+    }
+
+@app.get("/api/documents/{document_id}/content")
+async def get_document_content(document_id: str, session_id: str):
+    """
+    Get full text content of a processed document for AI insights.
+    """
+    session = get_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found or expired")
+    
+    documents = session.get("documents", [])
+    document = next((doc for doc in documents if doc.get("document_id") == document_id), None)
+    
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found in session")
+    
+    if document.get("processing_status") != "completed":
+        raise HTTPException(status_code=400, detail="Document processing not completed")
+    
+    # Combine all section content
+    sections = document.get("sections", [])
+    full_content = ""
+    
+    for section in sections:
+        content = section.get("content", "")
+        if content.strip():
+            full_content += content + "\n\n"
+    
+    return {
+        "document_id": document_id,
+        "content": full_content.strip(),
+        "content_length": len(full_content),
+        "sections_count": len(sections),
+        "title": document.get("title", ""),
+        "total_pages": document.get("total_pages", 0)
     }
 
 class TextSelectionRequest(BaseModel):
@@ -1576,6 +1618,120 @@ async def serve_static_file(file_path: str):
     response.headers["Cache-Control"] = "public, max-age=3600"
     
     return response
+
+@app.post("/api/insights/generate")
+async def generate_insights(request: dict):
+    """Generate comprehensive insights for document content"""
+    try:
+        llm_service = get_llm_service()
+        if not llm_service:
+            return {"error": "LLM service not available"}
+            
+        content = request.get('content', '')
+        if not content:
+            return {"error": "Content is required"}
+        
+        insights = llm_service.generate_insights(content)
+        if not insights:
+            return {"error": "Failed to generate insights"}
+        
+        return {
+            "success": True,
+            "insights": {
+                "takeaways": insights.takeaways,
+                "contradictions": insights.contradictions,
+                "examples": insights.examples,
+                "did_you_know": insights.did_you_know,
+                "processing_time": insights.processing_time
+            }
+        }
+    except Exception as e:
+        return {"error": f"Failed to generate insights: {str(e)}"}
+
+@app.post("/api/insights/takeaways")
+async def generate_takeaways_only(request: dict):
+    """Generate only takeaways for faster response"""
+    try:
+        llm_service = get_llm_service()
+        if not llm_service:
+            return {"error": "LLM service not available"}
+            
+        content = request.get('content', '')
+        if not content:
+            return {"error": "Content is required"}
+        
+        takeaways = llm_service.generate_takeaways(content)
+        return {"success": True, "takeaways": takeaways}
+    except Exception as e:
+        return {"error": f"Failed to generate takeaways: {str(e)}"}
+
+@app.post("/api/insights/contradictions")
+async def generate_contradictions_only(request: dict):
+    """Generate only contradictions for faster response"""
+    try:
+        llm_service = get_llm_service()
+        if not llm_service:
+            return {"error": "LLM service not available"}
+            
+        content = request.get('content', '')
+        if not content:
+            return {"error": "Content is required"}
+        
+        contradictions = llm_service.generate_contradictions(content)
+        return {"success": True, "contradictions": contradictions}
+    except Exception as e:
+        return {"error": f"Failed to generate contradictions: {str(e)}"}
+
+@app.post("/api/insights/examples")
+async def generate_examples_only(request: dict):
+    """Generate only examples for faster response"""
+    try:
+        llm_service = get_llm_service()
+        if not llm_service:
+            return {"error": "LLM service not available"}
+            
+        content = request.get('content', '')
+        if not content:
+            return {"error": "Content is required"}
+        
+        examples = llm_service.generate_examples(content)
+        return {"success": True, "examples": examples}
+    except Exception as e:
+        return {"error": f"Failed to generate examples: {str(e)}"}
+
+@app.post("/api/insights/facts")
+async def generate_facts_only(request: dict):
+    """Generate only 'did you know' facts for faster response"""
+    try:
+        llm_service = get_llm_service()
+        if not llm_service:
+            return {"error": "LLM service not available"}
+            
+        content = request.get('content', '')
+        if not content:
+            return {"error": "Content is required"}
+        
+        facts = llm_service.generate_facts(content)
+        return {"success": True, "facts": facts}
+    except Exception as e:
+        return {"error": f"Failed to generate facts: {str(e)}"}
+
+@app.get("/api/insights/cache/stats")
+async def get_cache_stats():
+    """Get LLM cache statistics"""
+    llm_service = get_llm_service()
+    if not llm_service:
+        return {"error": "LLM service not available"}
+    return llm_service.get_cache_stats()
+
+@app.post("/api/insights/cache/clear")
+async def clear_cache():
+    """Clear LLM cache"""
+    llm_service = get_llm_service()
+    if not llm_service:
+        return {"error": "LLM service not available"}
+    llm_service.clear_cache()
+    return {"success": True, "message": "Cache cleared"}
 
 if __name__ == "__main__":
     import uvicorn

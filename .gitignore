@@ -73,6 +73,9 @@ credentials/
 # Streamlit
 .streamlit/
 
+#frontend
+./frontend-react/node_modules/
+
 # Cache
 .cache/
 *.cache
@@ -93,3 +96,4 @@ vector_cache/
 /.kiro/
 
 .env.example
+/frontend-react/node_modules/

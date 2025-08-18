@@ -4,6 +4,7 @@ Streamlit frontend main application for PDF Analysis Workbench.
 import streamlit as st
 import requests
 import os
+import time
 from datetime import datetime
 
 # Configure Streamlit page
@@ -16,6 +17,51 @@ st.set_page_config(
 
 # Backend API configuration
 BACKEND_URL = f"http://localhost:{os.getenv('FASTAPI_BACKEND_PORT', '8000')}"
+
+def fetch_insights(session_id: str, document_id: str):
+    """Fetch AI insights for a document."""
+    try:
+        st.write(f"🔍 DEBUG: Fetching insights for doc {document_id} in session {session_id}")
+        
+        # First get the document content
+        content_url = f"{BACKEND_URL}/api/documents/{document_id}/content"
+        st.write(f"🔗 Content URL: {content_url}")
+        
+        response = requests.get(content_url, params={"session_id": session_id})
+        st.write(f"📡 Content response: {response.status_code}")
+        
+        if response.status_code != 200:
+            st.error(f"Failed to get document content: {response.status_code} - {response.text}")
+            return None
+            
+        document_data = response.json()
+        content = document_data.get('content', '')
+        st.write(f"📄 Content length: {len(content)} characters")
+        
+        if not content:
+            st.error("No content found in document")
+            return None
+            
+        # Generate insights
+        insights_url = f"{BACKEND_URL}/api/insights/generate"
+        st.write(f"🔗 Insights URL: {insights_url}")
+        
+        insight_response = requests.post(insights_url, json={"content": content})
+        st.write(f"📡 Insights response: {insight_response.status_code}")
+        
+        if insight_response.status_code == 200:
+            result = insight_response.json()
+            st.write(f"✅ Insights generated successfully!")
+            return result
+        else:
+            st.error(f"Failed to generate insights: {insight_response.status_code} - {insight_response.text}")
+            return None
+            
+    except Exception as e:
+        st.error(f"Error fetching insights: {str(e)}")
+        import traceback
+        st.code(traceback.format_exc())
+        return None
 
 # Custom CSS for 3-column layout
 def load_custom_css():
@@ -1123,20 +1169,25 @@ def render_pdf_viewer(tab_data, zoom_level, tab_index):
     function triggerStreamlitUpdate(selectedText) {{
         console.log('🎯 TRIGGERING STREAMLIT UPDATE for:', selectedText.substring(0, 50) + '...');
         
-        // Store the selected text in a way that Streamlit can access
-        window.currentSelectedText = selectedText;
-        window.selectionTimestamp = Date.now();
+        // Store the selected text in sessionStorage (safer for iframe)
+        const selectionData = {{
+            text: selectedText,
+            timestamp: Date.now(),
+            processed: false
+        }};
+        sessionStorage.setItem('streamlit_text_selection', JSON.stringify(selectionData));
         
-        // Set a URL parameter to trigger Streamlit rerun
-        const url = new URL(window.location);
-        url.searchParams.set('text_selected', encodeURIComponent(selectedText.substring(0, 100)));
-        url.searchParams.set('timestamp', Date.now());
-        window.history.pushState({{}}, '', url);
+        // Set a data attribute on the body for Streamlit to detect
+        document.body.setAttribute('data-new-selection', selectedText.substring(0, 100));
+        document.body.setAttribute('data-selection-time', Date.now());
         
-        // Force a page reload to trigger Streamlit processing
-        setTimeout(() => {{
-            window.location.reload();
-        }}, 100);
+        console.log('📦 STORED SELECTION IN SESSION STORAGE');
+        
+        // Trigger a small DOM change to notify Streamlit
+        const event = new CustomEvent('streamlit-text-selection', {{
+            detail: {{ text: selectedText, timestamp: Date.now() }}
+        }});
+        document.dispatchEvent(event);
     }}
     
     function searchRelatedContent(selectedText) {{
@@ -1348,21 +1399,80 @@ def create_workbench_interface():
             if active_pdf:
                 st.success(f"**📊 Insights for {active_pdf['title']}**")
                 
-                with st.expander("Key Takeaways", expanded=True):
-                    st.write("• Main concepts and findings")
-                    st.write("• Important conclusions")
-                    st.write("• Critical data points")
+                # Initialize insights cache
+                if 'insights_cache' not in st.session_state:
+                    st.session_state.insights_cache = {}
                 
-                with st.expander("Examples"):
-                    st.write("Cross-document examples and case studies")
+                document_id = st.session_state.active_tab
+                cache_key = f"{st.session_state.session_id}_{document_id}"
                 
-                with st.expander("Did You Know?"):
-                    st.write("Interesting facts and connections")
+                # Check if we have cached insights
+                if cache_key not in st.session_state.insights_cache:
+                    with st.spinner("Generating AI insights..."):
+                        insights_data = fetch_insights(st.session_state.session_id, document_id)
+                        if insights_data and insights_data.get('success'):
+                            st.session_state.insights_cache[cache_key] = insights_data['insights']
+                        else:
+                            st.session_state.insights_cache[cache_key] = None
                 
-                st.info("*AI insight generation will be implemented in task 6.1*")
+                insights = st.session_state.insights_cache.get(cache_key)
+                
+                if insights:
+                    # Display takeaways
+                    with st.expander("Key Takeaways", expanded=True):
+                        if insights.get('takeaways'):
+                            for takeaway in insights['takeaways']:
+                                st.write(f"• {takeaway}")
+                        else:
+                            st.write("No takeaways found.")
+                    
+                    # Display contradictions
+                    with st.expander("Contradictions"):
+                        if insights.get('contradictions'):
+                            for contradiction in insights['contradictions']:
+                                st.warning(f"⚠️ {contradiction}")
+                        else:
+                            st.write("No contradictions found.")
+                    
+                    # Display examples
+                    with st.expander("Examples"):
+                        if insights.get('examples'):
+                            for example in insights['examples']:
+                                st.write(f"📝 {example}")
+                        else:
+                            st.write("No examples found.")
+                    
+                    # Display did you know facts
+                    with st.expander("Did You Know?"):
+                        if insights.get('did_you_know'):
+                            for fact in insights['did_you_know']:
+                                st.info(f"💡 {fact}")
+                        else:
+                            st.write("No interesting facts found.")
+                    
+                    # Show processing time
+                    if insights.get('processing_time'):
+                        st.caption(f"Generated in {insights['processing_time']:.2f}s")
+                else:
+                    st.error("Failed to generate insights. Please check that the document is processed.")
+                    
+                # Add refresh button
+                if st.button("🔄 Refresh Insights", key=f"refresh_{document_id}"):
+                    if cache_key in st.session_state.insights_cache:
+                        del st.session_state.insights_cache[cache_key]
+                    st.rerun()
         
         # Related Content Section
         st.markdown("### 🔍 Related Content")
+        
+        # Add refresh button for dynamic updates
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.caption("Select text in the PDF above to find related content")
+            st.caption("⚠️ **Manual refresh required**: Click 🔄 after selecting text")
+        with col2:
+            if st.button("🔄", help="Refresh to check for new text selections", key="refresh_related"):
+                st.rerun()
         
         # Initialize related content state
         if 'related_content_state' not in st.session_state:
@@ -1387,11 +1497,32 @@ def create_workbench_interface():
                 document.body.setAttribute('data-selection-time', data.timestamp);
                 
                 console.log('🎯 FLAGGED NEW SELECTION FOR STREAMLIT:', data.text.substring(0, 50) + '...');
+                
+                // Send selection to Streamlit via a hidden form
+                const form = document.createElement('form');
+                form.style.display = 'none';
+                const input = document.createElement('input');
+                input.name = 'selected_text';
+                input.value = data.text;
+                form.appendChild(input);
+                document.body.appendChild(form);
             }
         }
         </script>
         """
         st.markdown(check_js_selection, unsafe_allow_html=True)
+        
+        # Auto-refresh every 3 seconds to check for new selections
+        if st.session_state.related_content_state == 'idle':
+            time.sleep(0.1)  # Small delay to prevent excessive CPU usage
+            # Check if there's a pending selection
+            if st.button("🔄 Check for selections", key="auto_refresh"):
+                st.rerun()
+        
+        # Add auto-refresh for active selections
+        if st.session_state.related_content_state == 'searching':
+            if st.button("⏳ Searching...", disabled=True):
+                pass
         
         # Check for text selection from URL parameters (triggered by JavaScript)
         try:
@@ -1882,6 +2013,28 @@ def main():
     
     # Load custom CSS
     load_custom_css()
+    
+    # Initialize auto-refresh timer
+    if 'last_auto_refresh' not in st.session_state:
+        st.session_state.last_auto_refresh = time.time()
+    
+    # Auto-refresh every 3 seconds to check for text selections
+    current_time = time.time()
+    if current_time - st.session_state.last_auto_refresh > 3:
+        st.session_state.last_auto_refresh = current_time
+        # Check for pending selections and rerun if found
+        st.markdown("""
+        <script>
+        const pendingSelection = sessionStorage.getItem('streamlit_text_selection');
+        if (pendingSelection) {
+            const data = JSON.parse(pendingSelection);
+            if (!data.processed && data.text.length > 5) {
+                // Trigger a page refresh
+                window.location.reload();
+            }
+        }
+        </script>
+        """, unsafe_allow_html=True)
     
     # Handle text selection events
     handle_text_selection_events()
