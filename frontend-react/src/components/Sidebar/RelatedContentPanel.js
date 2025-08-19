@@ -7,7 +7,8 @@ const RelatedContentPanel = ({
     selectedText,
     relatedContent,
     setRelatedContent,
-    documents
+    documents,
+    onNavigateToContent
 }) => {
     const [searching, setSearching] = useState(false);
     const [error, setError] = useState(null);
@@ -75,6 +76,28 @@ const RelatedContentPanel = ({
         if (score >= 0.8) return 'text-green-600 bg-green-100';
         if (score >= 0.6) return 'text-yellow-600 bg-yellow-100';
         return 'text-red-600 bg-red-100';
+    };
+
+    const handleContentClick = (section) => {
+        console.log('🔗 Navigating to related content:', {
+            documentId: section.document_id,
+            pageNumber: section.page_number,
+            snippet: section.snippet?.substring(0, 50) + '...'
+        });
+
+        if (onNavigateToContent) {
+            // Extract the most relevant text to highlight from the snippet
+            const highlightText = section.snippet || section.text || selectedText;
+
+            // Navigate to the document and page with highlighting
+            onNavigateToContent(
+                section.document_id,
+                section.page_number,
+                highlightText.substring(0, 100) // Limit highlight text length
+            );
+        } else {
+            console.warn('Navigation function not available');
+        }
     };
 
     return (
@@ -167,29 +190,33 @@ const RelatedContentPanel = ({
                         </div>
 
                         {relatedContent.map((section, index) => (
-                            <div key={index} className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-colors">
+                            <div
+                                key={index}
+                                className="border-2 border-gray-300 rounded-lg p-3 hover:bg-blue-50 hover:border-blue-400 transition-all duration-200 cursor-pointer group hover:shadow-lg bg-white"
+                                onClick={() => handleContentClick(section)}
+                            >
                                 {/* Header with document info */}
                                 <div className="flex items-center justify-between mb-2">
-                                    <div className="flex items-center text-sm text-gray-600">
-                                        <FileText className="h-4 w-4 mr-1" />
-                                        <span className="font-medium">
+                                    <div className="flex items-center text-xs text-gray-600 group-hover:text-blue-700 flex-1 min-w-0">
+                                        <FileText className="h-3 w-3 mr-1 flex-shrink-0" />
+                                        <span className="font-medium text-xs truncate">
                                             {getDocumentTitle(section.document_id)}
                                         </span>
-                                        <span className="mx-2">•</span>
-                                        <span>Page {section.page_number}</span>
+                                        <span className="mx-1 flex-shrink-0">•</span>
+                                        <span className="text-xs flex-shrink-0">Page {section.page_number}</span>
                                     </div>
-                                    <div className={`px-2 py-1 rounded-full text-xs font-medium ${getConfidenceColor(section.similarity_score)}`}>
-                                        {Math.round(section.similarity_score * 100)}% match
+                                    <div className={`px-1.5 py-0.5 rounded text-xs font-medium ml-2 flex-shrink-0 ${getConfidenceColor(section.similarity_score)}`}>
+                                        {Math.round(section.similarity_score * 100)}%
                                     </div>
                                 </div>
 
                                 {/* Content snippet */}
-                                <div className="text-sm text-gray-700 leading-relaxed">
+                                <div className="text-xs text-gray-700 leading-relaxed group-hover:text-gray-900 mb-2">
                                     {section.snippet || section.text}
                                 </div>
 
                                 {/* Metadata */}
-                                <div className="mt-2 text-xs text-gray-500 flex items-center space-x-4">
+                                <div className="text-xs text-gray-500 flex items-center space-x-3 group-hover:text-gray-600">
                                     <span>Type: {section.section_type}</span>
                                     {section.confidence_score && (
                                         <span>Confidence: {Math.round(section.confidence_score * 100)}%</span>

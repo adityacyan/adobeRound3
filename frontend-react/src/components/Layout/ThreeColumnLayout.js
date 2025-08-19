@@ -22,6 +22,7 @@ const ThreeColumnLayout = () => {
     const [insightsSectionExpanded, setInsightsSectionExpanded] = useState(false);
     const [webSocketConnected, setWebSocketConnected] = useState(false);
     const [lastWebSocketMessage, setLastWebSocketMessage] = useState(null);
+    const [pdfNavigationFunction, setPdfNavigationFunction] = useState(null);
 
     // Initialize session on mount
     useEffect(() => {
@@ -134,6 +135,21 @@ const ThreeColumnLayout = () => {
         console.log('Text selected:', text);
     };
 
+    const handleNavigationRequest = (documentId, pageNumber, searchText) => {
+        console.log('🧭 Navigation requested from RelatedContent:', { documentId, pageNumber, searchText });
+
+        if (pdfNavigationFunction) {
+            pdfNavigationFunction(documentId, pageNumber, searchText);
+        } else {
+            console.warn('PDF navigation function not available');
+        }
+    };
+
+    const handlePdfNavigationReady = (navigationFn) => {
+        setPdfNavigationFunction(() => navigationFn);
+        console.log('📄 PDF navigation function registered');
+    };
+
     const activeDocument = documents.find(doc => doc.document_id === activeDocumentId);
 
     return (
@@ -204,6 +220,7 @@ const ThreeColumnLayout = () => {
                                 relatedContent={relatedContent}
                                 setRelatedContent={setRelatedContent}
                                 documents={documents}
+                                onNavigateToContent={handleNavigationRequest}
                             />
                         </div>
                     </div>
@@ -226,6 +243,7 @@ const ThreeColumnLayout = () => {
                                 activeDocumentId={activeDocumentId}
                                 setActiveDocumentId={setActiveDocumentId}
                                 onTextSelection={handleTextSelection}
+                                onNavigationRequest={handlePdfNavigationReady}
                             />
                         )}
                     </div>

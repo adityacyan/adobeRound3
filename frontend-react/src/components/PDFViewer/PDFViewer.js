@@ -15,7 +15,8 @@ const PDFViewer = ({
     documents,
     activeDocumentId,
     setActiveDocumentId,
-    onTextSelection
+    onTextSelection,
+    onNavigationRequest
 }) => {
     // Utility function to truncate text with ellipsis
     const truncateText = (text, maxLength = 30) => {
@@ -278,6 +279,207 @@ const PDFViewer = ({
     const zoomOut = () => {
         setScale(prev => Math.max(prev - 0.2, 0.5));
     };
+
+    // Function to clear existing highlights
+    const clearExistingHighlights = useCallback(() => {
+        try {
+            // Clear span-based highlights
+            const highlights = document.querySelectorAll('.pdf-text-highlight');
+            highlights.forEach(highlight => {
+                const parent = highlight.parentNode;
+                if (parent) {
+                    parent.replaceChild(document.createTextNode(highlight.textContent), highlight);
+                    parent.normalize(); // Merge adjacent text nodes
+                }
+            });
+
+            // Clear element-based highlights
+            const elementHighlights = document.querySelectorAll('.pdf-text-highlight-element');
+            elementHighlights.forEach(element => {
+                element.style.backgroundColor = '';
+                element.style.borderRadius = '';
+                element.style.padding = '';
+                element.classList.remove('pdf-text-highlight-element');
+            });
+
+            // Clear browser selection
+            if (window.getSelection) {
+                window.getSelection().removeAllRanges();
+            }
+
+            console.log('🧹 Existing highlights cleared');
+        } catch (error) {
+            console.error('Error clearing highlights:', error);
+        }
+    }, []);
+
+    // Function to highlight text on the current page with light pink overlay
+    const highlightTextOnPage = useCallback((searchText) => {
+        try {
+            console.log('🎯 Attempting to highlight text:', searchText.substring(0, 50));
+
+            // Clear any existing highlights first
+            clearExistingHighlights();
+
+            // Find the PDF.js text layer specifically
+            const textLayer = document.querySelector('.react-pdf__Page__textContent') ||
+                document.querySelector('[data-page-number="' + pageNumber + '"] .react-pdf__Page__textContent') ||
+                pdfJsContainerRef.current?.querySelector('.react-pdf__Page__textContent');
+
+            if (!textLayer) {
+                console.log('❌ PDF text layer not found, trying general container');
+                // Fallback to general PDF container
+                const pdfContainer = pdfJsContainerRef.current || document.querySelector('.react-pdf__Document');
+                if (!pdfContainer) {
+                    console.log('❌ PDF container not found');
+                    return;
+                }
+            }
+
+            const searchContainer = textLayer || pdfJsContainerRef.current || document.querySelector('.react-pdf__Document');
+
+            // Create a case-insensitive search
+            const searchLower = searchText.toLowerCase().trim();
+            let found = false;
+
+            // Function to recursively search text nodes
+            const highlightInNode = (node) => {
+                if (node.nodeType === Node.TEXT_NODE) {
+                    const text = node.textContent.toLowerCase();
+                    let startIndex = 0;
+
+                    // Find all occurrences of the search text
+                    while (true) {
+                        const index = text.indexOf(searchLower, startIndex);
+                        if (index === -1) break;
+
+                        // Found the text, create highlighting
+                        const range = document.createRange();
+                        range.setStart(node, index);
+                        range.setEnd(node, index + searchLower.length);
+
+                        // Create highlight span
+                        const highlight = document.createElement('span');
+                        highlight.className = 'pdf-text-highlight';
+
+                        try {
+                            range.surroundContents(highlight);
+                            found = true;
+
+                            // Scroll the first highlighted element into view
+                            if (!found || startIndex === 0) {
+                                setTimeout(() => {
+                                    highlight.scrollIntoView({
+                                        behavior: 'smooth',
+                                        block: 'center',
+                                        inline: 'nearest'
+                                    });
+                                }, 200);
+                            }
+
+                            console.log('✨ Text highlighted successfully with pink overlay');
+                            break; // Only highlight first occurrence per text node
+                        } catch (e) {
+                            console.log('Could not surround range:', e.message);
+                            // Skip this occurrence and try the next
+                            startIndex = index + 1;
+                            continue;
+                        }
+                    }
+                } else if (node.nodeType === Node.ELEMENT_NODE && !node.classList.contains('pdf-text-highlight')) {
+                    // Recursively search child nodes, but avoid already highlighted elements
+                    const children = Array.from(node.childNodes);
+                    children.forEach(child => highlightInNode(child));
+                }
+            };
+
+            // Start the search
+            highlightInNode(searchContainer);
+
+            if (!found) {
+                console.log('❌ Text not found in PDF text layer, trying broader search');
+                // Try a more flexible search approach
+                const allTextElements = searchContainer.querySelectorAll('span, div, p');
+
+                for (let element of allTextElements) {
+                    const text = element.textContent.toLowerCase();
+                    if (text.includes(searchLower)) {
+                        // Create a visual highlight by adding background to the element
+                        element.style.backgroundColor = 'rgba(255, 182, 193, 0.6)';
+                        element.style.borderRadius = '3px';
+                        element.style.padding = '2px';
+                        element.classList.add('pdf-text-highlight-element');
+
+                        element.scrollIntoView({
+                            behavior: 'smooth',
+                            block: 'center',
+                            inline: 'nearest'
+                        });
+
+                        found = true;
+                        console.log('✨ Text highlighted using element-level highlighting');
+                        break;
+                    }
+                }
+            }
+
+            if (!found) {
+                console.log('❌ Text not found using DOM methods, trying browser find as fallback');
+                // Final fallback to browser find
+                if (window.find) {
+                    window.getSelection().removeAllRanges();
+                    const browserFound = window.find(searchText, false, false, true, false, true, false);
+                    if (browserFound) {
+                        console.log('✨ Text found using browser find');
+                    }
+                }
+            }
+
+        } catch (error) {
+            console.error('Error highlighting text:', error);
+        }
+    }, [pageNumber, clearExistingHighlights]);
+
+    // Navigation function for external components to navigate to specific content
+    const navigateToContent = useCallback((documentId, pageNum, searchText = null) => {
+        console.log('🧭 Navigation request:', { documentId, pageNum, searchText });
+
+        // Clear any existing highlights first
+        clearExistingHighlights();
+
+        // Switch to the target document if different from current
+        if (documentId !== activeDocumentId) {
+            setActiveDocumentId(documentId);
+        }
+
+        // Navigate to the target page
+        if (pageNum && pageNum !== pageNumber) {
+            setPageNumber(pageNum);
+        }
+
+        // If we have search text, we'll attempt to highlight it after the page loads
+        if (searchText) {
+            // Store the search text to highlight after page render
+            const highlightTimeout = setTimeout(() => {
+                console.log('🎯 Starting text highlighting after page load');
+                highlightTextOnPage(searchText);
+            }, 1500); // Give more time for page to render
+
+            return () => clearTimeout(highlightTimeout);
+        }
+    }, [activeDocumentId, pageNumber, setActiveDocumentId, clearExistingHighlights, highlightTextOnPage]);
+
+    // Clear highlights when changing pages or documents
+    useEffect(() => {
+        clearExistingHighlights();
+    }, [pageNumber, activeDocumentId, clearExistingHighlights]);
+
+    // Expose navigation function to parent component
+    useEffect(() => {
+        if (onNavigationRequest) {
+            onNavigationRequest(navigateToContent);
+        }
+    }, [navigateToContent, onNavigationRequest]);
     // https://stackoverflow.com/questions/48950038/how-do-i-retrieve-text-from-user-selection-in-pdf-js
     // Advanced PDF.js text selection (similar to the method you mentioned)
     const getHighlightCoords = useCallback(() => {
@@ -646,7 +848,7 @@ const PDFViewer = ({
                         ) : null}
 
                         {/* Text Selection Indicator */}
-                        {selectedText && (
+                        {/* {selectedText && (
                             <div className={`fixed top-20 left-4 px-4 py-3 rounded-lg shadow-lg text-sm max-w-xs z-50 border-2 ${useAdobeEmbed
                                 ? 'bg-red-500 bg-opacity-95 text-white border-red-600'
                                 : 'bg-blue-500 bg-opacity-95 text-white border-blue-600'
@@ -666,7 +868,7 @@ const PDFViewer = ({
                                     ×
                                 </button>
                             </div>
-                        )}
+                        )} */}
                     </div>
                 ) : (
                     <div className="absolute inset-0 flex items-center justify-center bg-gray-50">
