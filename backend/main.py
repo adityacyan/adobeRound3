@@ -15,7 +15,7 @@ import os
 from pathlib import Path
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 
 from pydantic import BaseModel
 import fitz  # PyMuPDF
@@ -30,6 +30,7 @@ from .embedding_service import embedding_service, SearchResult
 from .search_engine import search_engine, EnhancedSearchResult, SearchContext
 from .llm_service import get_llm_service
 from .llm_service import get_llm_service, InsightResponse
+from .audio_service import audio_service
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -101,6 +102,23 @@ class SummaryResponse(BaseModel):
     summary: str
     mode: str
     content_length: int
+    processing_time: float
+    timestamp: datetime
+
+class PodcastRequest(BaseModel):
+    """Request model for podcast generation."""
+    content: Optional[str] = None
+    document_id: Optional[str] = None
+    use_insights: bool = True
+    use_dual_speaker: bool = True
+    include_selection: bool = False
+
+class PodcastResponse(BaseModel):
+    """Response model for podcast generation."""
+    audio_url: str
+    duration_estimate: str
+    format: str
+    speakers_used: List[str]
     processing_time: float
     timestamp: datetime
 
@@ -1894,6 +1912,246 @@ async def clear_cache():
         return {"error": "LLM service not available"}
     llm_service.clear_cache()
     return {"success": True, "message": "Cache cleared"}
+
+# ===== PODCAST GENERATION ENDPOINTS =====
+
+@app.post("/session/{session_id}/podcast/generate", response_model=PodcastResponse)
+async def generate_podcast(session_id: str, request: PodcastRequest, background_tasks: BackgroundTasks):
+    """
+    Generate podcast-style audio from document content and insights.
+    """
+    start_time = time.time()
+    
+    # Validate session
+    if session_id not in sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    session_data = sessions[session_id]
+    
+    try:
+        # Send initial WebSocket update
+        await send_processing_update(session_id, "started", "Generating podcast audio...")
+        
+        # Gather content - be more flexible about content sources
+        content = ""
+        
+        # Priority 1: Direct content provided in request
+        if request.content:
+            content = request.content
+            logger.info("Using direct content from request")
+        
+        # Priority 2: Try to get content from specific document (but don't fail if not found)
+        elif request.document_id:
+            documents = session_data.get("documents", {})
+            
+            # Handle both dict and list formats for documents
+            if isinstance(documents, dict) and request.document_id in documents:
+                doc_data = documents[request.document_id]
+                if isinstance(doc_data, dict):
+                    sections = doc_data.get("sections", [])
+                    content_parts = []
+                    for section in sections:
+                        if isinstance(section, dict):
+                            section_content = section.get("content", "")
+                            if isinstance(section_content, str) and section_content.strip():
+                                content_parts.append(section_content)
+                        elif isinstance(section, str):
+                            content_parts.append(section)
+                    content = " ".join(content_parts)
+                    logger.info(f"Using content from document {request.document_id}")
+            elif isinstance(documents, list):
+                # If documents is a list, search by ID
+                found_doc = None
+                for doc_data in documents:
+                    if isinstance(doc_data, dict) and doc_data.get("id") == request.document_id:
+                        found_doc = doc_data
+                        break
+                
+                if found_doc:
+                    sections = found_doc.get("sections", [])
+                    content_parts = []
+                    for section in sections:
+                        if isinstance(section, dict):
+                            section_content = section.get("content", "")
+                            if isinstance(section_content, str) and section_content.strip():
+                                content_parts.append(section_content)
+                        elif isinstance(section, str):
+                            content_parts.append(section)
+                    content = " ".join(content_parts)
+                    logger.info(f"Using content from document {request.document_id}")
+                else:
+                    logger.warning(f"Document {request.document_id} not found, falling back to all available content")
+            else:
+                logger.warning(f"Document {request.document_id} not found, falling back to all available content")
+                # Fall through to Priority 3
+        
+        # Priority 3: Use all available session content
+        if not content.strip():
+            documents = session_data.get("documents", {})
+            all_sections = []
+            
+            # Handle both dict and list formats for documents
+            if isinstance(documents, dict):
+                for doc_id, doc_data in documents.items():
+                    if isinstance(doc_data, dict):
+                        sections = doc_data.get("sections", [])
+                        if isinstance(sections, list):
+                            all_sections.extend(sections)
+            elif isinstance(documents, list):
+                # If documents is a list, iterate directly
+                for doc_data in documents:
+                    if isinstance(doc_data, dict):
+                        sections = doc_data.get("sections", [])
+                        if isinstance(sections, list):
+                            all_sections.extend(sections)
+            
+            if all_sections:
+                # Extract content from sections with better error handling
+                content_parts = []
+                for section in all_sections:
+                    if isinstance(section, dict):
+                        section_content = section.get("content", "")
+                        if isinstance(section_content, str) and section_content.strip():
+                            content_parts.append(section_content)
+                    elif isinstance(section, str):
+                        # In case sections are stored as strings directly
+                        content_parts.append(section)
+                
+                content = " ".join(content_parts)
+                document_count = len(documents) if isinstance(documents, dict) else len(documents) if isinstance(documents, list) else 0
+                logger.info(f"Using content from {document_count} documents in session")
+            
+        # Priority 4: Try text selection
+        if not content.strip() and session_data.get("text_selection"):
+            content = session_data["text_selection"].get("text", "")
+            logger.info("Using text selection as content")
+        
+        # Priority 5: Provide demo content
+        if not content.strip():
+            content = """
+            Welcome to this AI-generated podcast demonstration. This feature converts document content 
+            into natural-sounding audio conversations between AI hosts. Upload PDF documents to generate 
+            podcasts from your actual content, or this demonstration will show you how the feature works.
+            The system can create engaging discussions about complex topics, making information more accessible.
+            """
+            logger.info("Using demo content for podcast generation")
+        
+        # Include text selection if specifically requested
+        if request.include_selection and session_data.get("text_selection"):
+            selection_text = session_data["text_selection"].get("text", "")
+            if selection_text and selection_text not in content:
+                content = f"Selected text: {selection_text}. Full context: {content}"
+        
+        # Generate insights if requested
+        insights = None
+        if request.use_insights:
+            await send_processing_update(session_id, "processing", "Generating insights for podcast...")
+            
+            llm_service = get_llm_service()
+            if llm_service:
+                try:
+                    # Generate comprehensive insights
+                    insight_content = content[:4000]  # Limit content for LLM processing
+                    
+                    takeaways = llm_service.generate_takeaways(insight_content)
+                    contradictions = llm_service.generate_contradictions(insight_content)
+                    examples = llm_service.generate_examples(insight_content)
+                    
+                    insights = {
+                        "takeaways": takeaways,
+                        "contradictions": contradictions,
+                        "examples": examples
+                    }
+                    
+                    logger.info(f"Generated insights for podcast: {len(takeaways)} takeaways, {len(contradictions)} contradictions, {len(examples)} examples")
+                except Exception as e:
+                    logger.warning(f"Failed to generate insights for podcast: {e}")
+                    insights = None
+        
+        # Generate audio
+        await send_processing_update(session_id, "processing", "Creating audio content...")
+        
+        audio_path = await audio_service.generate_podcast(
+            session_id=session_id,
+            content=content,
+            insights=insights,
+            use_dual_speaker=request.use_dual_speaker
+        )
+        
+        if not audio_path:
+            raise HTTPException(status_code=500, detail="Failed to generate podcast audio")
+        
+        # Generate audio URL
+        audio_url = audio_service.get_audio_url(audio_path)
+        
+        # Determine speakers used
+        speakers_used = []
+        if request.use_dual_speaker:
+            speakers_used = ["Host", "Guest"]
+        else:
+            speakers_used = ["Narrator"]
+        
+        processing_time = time.time() - start_time
+        
+        # Send completion update
+        await send_processing_update(session_id, "completed", f"Podcast generated successfully in {processing_time:.1f} seconds")
+        
+        # Schedule cleanup
+        background_tasks.add_task(audio_service.cleanup_old_audio_files)
+        
+        response = PodcastResponse(
+            audio_url=audio_url,
+            duration_estimate="2-5 minutes",
+            format="MP3",
+            speakers_used=speakers_used,
+            processing_time=processing_time,
+            timestamp=datetime.now()
+        )
+        
+        logger.info(f"Podcast generated successfully for session {session_id}: {audio_url}")
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Podcast generation error for session {session_id}: {e}")
+        await send_processing_update(session_id, "error", f"Failed to generate podcast: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Podcast generation failed: {str(e)}")
+
+@app.get("/audio/{filename}")
+async def serve_audio(filename: str):
+    """Serve generated audio files."""
+    try:
+        audio_path = audio_service.audio_dir / filename
+        
+        if not audio_path.exists():
+            raise HTTPException(status_code=404, detail="Audio file not found")
+        
+        return FileResponse(
+            path=str(audio_path),
+            media_type="audio/mpeg",
+            filename=filename,
+            headers={"Cache-Control": "public, max-age=3600"}  # Cache for 1 hour
+        )
+        
+    except Exception as e:
+        logger.error(f"Error serving audio file {filename}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to serve audio file")
+
+@app.get("/session/{session_id}/podcast/status")
+async def get_podcast_status(session_id: str):
+    """Get podcast generation status and available podcasts."""
+    if session_id not in sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    # This could be expanded to track podcast generation status
+    # For now, return basic status
+    return {
+        "session_id": session_id,
+        "audio_service_available": audio_service._validate_config(),
+        "supported_formats": ["MP3"],
+        "max_duration": "5 minutes"
+    }
 
 # WebSocket Connection Manager
 class ConnectionManager:

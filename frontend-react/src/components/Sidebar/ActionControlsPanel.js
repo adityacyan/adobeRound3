@@ -16,10 +16,19 @@ const ActionControlsPanel = ({
     const [documentSummaryError, setDocumentSummaryError] = useState('');
     const [audioUrl, setAudioUrl] = useState(null);
     const [summaryCache, setSummaryCache] = useState(new Map());
+    const [podcastCache, setPodcastCache] = useState(new Map());
+
+    // Podcast generation progress state
+    const [generatingPodcast, setGeneratingPodcast] = useState(false);
+    const [podcastProgress, setPodcastProgress] = useState(0);
+    const [podcastProgressMessage, setPodcastProgressMessage] = useState('');
 
     // Collapsible states
     const [selectionSectionExpanded, setSelectionSectionExpanded] = useState(false);
     const [documentSectionExpanded, setDocumentSectionExpanded] = useState(false);
+
+    // WebSocket reference for cleanup
+    const [wsRef, setWsRef] = useState(null);
 
     // Reset summaries and manage expanded states when active document changes
     useEffect(() => {
@@ -27,12 +36,17 @@ const ActionControlsPanel = ({
             // Check if we have cached summaries for this document
             const selectionCacheKey = `${activeDocumentId}_selection`;
             const documentCacheKey = `${activeDocumentId}_document`;
+            const podcastCacheKey = `${sessionId}_${activeDocumentId}`;
 
             const cachedSelectionSummary = summaryCache.get(selectionCacheKey);
             const cachedDocumentSummary = summaryCache.get(documentCacheKey);
+            const cachedPodcast = podcastCache.get(podcastCacheKey);
 
             if (cachedSelectionSummary) {
-                setSelectionSummary(cachedSelectionSummary);
+                const summaryText = typeof cachedSelectionSummary === 'string'
+                    ? cachedSelectionSummary
+                    : JSON.stringify(cachedSelectionSummary, null, 2);
+                setSelectionSummary(summaryText);
                 setSelectionSummaryError('');
             } else {
                 setSelectionSummary('');
@@ -40,7 +54,10 @@ const ActionControlsPanel = ({
             }
 
             if (cachedDocumentSummary) {
-                setDocumentSummary(cachedDocumentSummary);
+                const summaryText = typeof cachedDocumentSummary === 'string'
+                    ? cachedDocumentSummary
+                    : JSON.stringify(cachedDocumentSummary, null, 2);
+                setDocumentSummary(summaryText);
                 setDocumentSummaryError('');
                 setDocumentSectionExpanded(true); // Auto-expand if summary exists
             } else {
@@ -49,10 +66,23 @@ const ActionControlsPanel = ({
                 setDocumentSectionExpanded(false); // Collapsed by default
             }
 
-            // Reset audio URL when document changes
-            setAudioUrl(null);
+            // Reset audio URL when document changes, or set cached podcast
+            if (cachedPodcast) {
+                setAudioUrl(cachedPodcast);
+            } else {
+                setAudioUrl(null);
+            }
         }
-    }, [activeDocumentId, summaryCache]);
+    }, [activeDocumentId, summaryCache, podcastCache, sessionId]);
+
+    // Cleanup WebSocket on unmount
+    useEffect(() => {
+        return () => {
+            if (wsRef) {
+                wsRef.close();
+            }
+        };
+    }, [wsRef]);
 
     // Manage selection section expansion based on selected text and existing summary
     useEffect(() => {
@@ -99,11 +129,23 @@ const ActionControlsPanel = ({
             // Clear the timeout since we got a response
             clearTimeout(timeoutId);
 
-            setSelectionSummary(result.summary);
+            // Debug logging to understand response structure
+            console.log('Selection summary result:', result);
+            console.log('Selection summary type:', typeof result.summary);
+            console.log('Selection summary content:', result.summary);
+
+            // Ensure the summary is a string, not an object
+            const summaryText = typeof result.summary === 'string'
+                ? result.summary
+                : typeof result.summary === 'object'
+                    ? JSON.stringify(result.summary, null, 2)
+                    : String(result.summary);
+
+            setSelectionSummary(summaryText);
 
             // Cache the summary for this document/selection combination
             const cacheKey = `${activeDocumentId}_selection`;
-            setSummaryCache(prev => new Map(prev.set(cacheKey, result.summary)));
+            setSummaryCache(prev => new Map(prev.set(cacheKey, summaryText)));
 
             console.log('Selection summary generated successfully:', result);
 
@@ -145,11 +187,23 @@ const ActionControlsPanel = ({
             // Clear the timeout since we got a response
             clearTimeout(timeoutId);
 
-            setDocumentSummary(result.summary);
+            // Debug logging to understand response structure
+            console.log('Document summary result:', result);
+            console.log('Document summary type:', typeof result.summary);
+            console.log('Document summary content:', result.summary);
+
+            // Ensure the summary is a string, not an object
+            const summaryText = typeof result.summary === 'string'
+                ? result.summary
+                : typeof result.summary === 'object'
+                    ? JSON.stringify(result.summary, null, 2)
+                    : String(result.summary);
+
+            setDocumentSummary(summaryText);
 
             // Cache the summary for this document
             const cacheKey = `${activeDocumentId}_document`;
-            setSummaryCache(prev => new Map(prev.set(cacheKey, result.summary)));
+            setSummaryCache(prev => new Map(prev.set(cacheKey, summaryText)));
 
             console.log('Document summary generated successfully:', result);
 
@@ -165,18 +219,153 @@ const ActionControlsPanel = ({
     };
 
     const handleGeneratePodcast = async () => {
-        setGeneratingDocument(true);
+        // Check if we already have a cached podcast for this session/document
+        const podcastCacheKey = activeDocumentId ? `${sessionId}_${activeDocumentId}` : sessionId;
+        const cachedPodcast = podcastCache.get(podcastCacheKey);
+
+        if (cachedPodcast) {
+            setAudioUrl(cachedPodcast);
+            console.log('Using cached podcast:', cachedPodcast);
+            return;
+        }
+
+        setGeneratingPodcast(true);
+        // Remove this line that was causing interference: setGeneratingDocument(true);
+        setPodcastProgress(0);
+        setPodcastProgressMessage('Starting podcast generation...');
+
+        // Set up WebSocket for progress updates
+        let ws = null;
+        if (sessionId) {
+            try {
+                ws = new WebSocket(`ws://localhost:8000/ws/${sessionId}`);
+                setWsRef(ws);
+
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        if (data.type === 'processing_update') {
+                            const { status, message } = data;
+
+                            // Update progress based on status
+                            switch (status) {
+                                case 'started':
+                                    setPodcastProgress(15);
+                                    setPodcastProgressMessage(message || 'Initializing podcast generation...');
+                                    break;
+                                case 'processing':
+                                    // Determine sub-stage based on message content
+                                    if (message && message.includes('insights')) {
+                                        setPodcastProgress(35);
+                                        setPodcastProgressMessage('Analyzing content and generating insights...');
+                                    } else if (message && message.includes('audio')) {
+                                        setPodcastProgress(70);
+                                        setPodcastProgressMessage('Converting text to speech...');
+                                    } else {
+                                        setPodcastProgress(50);
+                                        setPodcastProgressMessage(message || 'Processing content...');
+                                    }
+                                    break;
+                                case 'completed':
+                                    setPodcastProgress(100);
+                                    setPodcastProgressMessage(message || 'Podcast generation complete!');
+                                    break;
+                                default:
+                                    // Gradual progress increase for unknown states
+                                    setPodcastProgress(prev => Math.min(prev + 5, 85));
+                                    setPodcastProgressMessage(message || 'Processing...');
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('Failed to parse WebSocket message:', e);
+                    }
+                };
+
+                ws.onerror = (error) => {
+                    console.warn('WebSocket error:', error);
+                };
+            } catch (error) {
+                console.warn('Failed to establish WebSocket connection:', error);
+            }
+        }
 
         try {
-            // Simulate podcast generation
-            await new Promise(resolve => setTimeout(resolve, 3000));
+            if (!sessionId) {
+                console.error('No session ID available');
+                return;
+            }
 
-            // This would normally call the backend to generate audio
-            setAudioUrl('demo-podcast.mp3'); // Demo URL
+            // Prepare podcast request
+            const podcastRequest = {
+                use_insights: true,
+                use_dual_speaker: true,
+                include_selection: !!selectedText
+            };
+
+            // If there's selected text, prioritize it as content
+            if (selectedText) {
+                podcastRequest.content = selectedText;
+                console.log('Using selected text for podcast');
+            }
+            // Only include document_id if we have an active document AND no selected text
+            else if (activeDocumentId) {
+                podcastRequest.document_id = activeDocumentId;
+                console.log('Using active document for podcast:', activeDocumentId);
+            }
+            // Otherwise, let the backend use all available content or demo content
+
+            console.log('Generating podcast with request:', podcastRequest);
+
+            // Call the backend API
+            const response = await fetch(`http://localhost:8000/session/${sessionId}/podcast/generate`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(podcastRequest),
+            });
+
+            if (!response.ok) {
+                const errorData = await response.json();
+                throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+            }
+
+            const result = await response.json();
+            console.log('Podcast generated:', result);
+
+            // Set the audio URL for playback
+            setAudioUrl(result.audio_url);
+
+            // Cache the podcast
+            const podcastCacheKey = activeDocumentId ? `${sessionId}_${activeDocumentId}` : sessionId;
+            setPodcastCache(prev => new Map(prev.set(podcastCacheKey, result.audio_url)));
+
+            // Final progress update
+            setPodcastProgress(100);
+            setPodcastProgressMessage('Podcast ready for playback!');
+
         } catch (error) {
             console.error('Failed to generate podcast:', error);
+            setPodcastProgress(0);
+            setPodcastProgressMessage('Failed to generate podcast');
+            alert(`Failed to generate podcast: ${error.message}`);
         } finally {
-            setGeneratingDocument(false);
+            setGeneratingPodcast(false);
+            // Remove this line that was causing interference: setGeneratingDocument(false);
+
+            // Close WebSocket connection
+            if (ws) {
+                ws.close();
+                setWsRef(null);
+            }
+
+            // Clear progress after a delay
+            setTimeout(() => {
+                if (!generatingPodcast) {
+                    setPodcastProgress(0);
+                    setPodcastProgressMessage('');
+                }
+            }, 3000);
         }
     };
 
@@ -335,7 +524,12 @@ const ActionControlsPanel = ({
                                                             </svg>
                                                             <p className="text-sm font-medium text-green-800">Selection Summary Generated</p>
                                                         </div>
-                                                        <p className="text-sm text-gray-700 whitespace-pre-wrap">{selectionSummary}</p>
+                                                        <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                                                            {typeof selectionSummary === 'string'
+                                                                ? selectionSummary
+                                                                : JSON.stringify(selectionSummary, null, 2)
+                                                            }
+                                                        </p>
                                                     </div>
 
                                                     <div className="flex space-x-2">
@@ -396,7 +590,7 @@ const ActionControlsPanel = ({
                                                     px-3 py-1 rounded-md text-sm font-medium transition-colors
                                                     ${generatingDocument
                                                         ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
-                                                        : 'bg-green-600 text-white hover:bg-green-700'
+                                                        : 'bg-purple-600 text-white hover:bg-purple-700'
                                                     }
                                                 `}
                                             >
@@ -455,7 +649,12 @@ const ActionControlsPanel = ({
                                                         </svg>
                                                         <p className="text-sm font-medium text-green-800">Document Summary Generated</p>
                                                     </div>
-                                                    <p className="text-sm text-gray-700 whitespace-pre-wrap">{documentSummary}</p>
+                                                    <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                                                        {typeof documentSummary === 'string'
+                                                            ? documentSummary
+                                                            : JSON.stringify(documentSummary, null, 2)
+                                                        }
+                                                    </p>
                                                 </div>
 
                                                 <div className="flex space-x-2">
@@ -485,21 +684,63 @@ const ActionControlsPanel = ({
                     {/* Podcast Generation */}
                     <div className="bg-white border border-gray-200 rounded-lg p-4">
                         <div className="flex items-center justify-between mb-3">
-                            <h4 className="font-medium text-gray-700">Generate Podcast</h4>
+                            <div className="flex items-center gap-2">
+                                <h4 className="font-medium text-gray-700">Generate Podcast</h4>
+                                {/* Cache indicator commented out
+                                {(() => {
+                                    const podcastCacheKey = activeDocumentId ? `${sessionId}_${activeDocumentId}` : sessionId;
+                                    const isCached = podcastCache.has(podcastCacheKey);
+                                    return isCached ? (
+                                        <span className="px-2 py-1 text-xs bg-green-100 text-green-700 rounded-full">
+                                            Cached
+                                        </span>
+                                    ) : null;
+                                })()}
+                                */}
+                            </div>
                             <button
                                 onClick={handleGeneratePodcast}
-                                disabled={generatingDocument}
+                                disabled={generatingPodcast}
                                 className={`
                   px-3 py-1 rounded-md text-sm font-medium transition-colors
-                  ${generatingDocument
+                  ${generatingPodcast
                                         ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
                                         : 'bg-green-600 text-white hover:bg-green-700'
                                     }
                 `}
                             >
-                                {generatingDocument ? 'Generating...' : 'Generate'}
+                                {generatingPodcast ? 'Generating...' : 'Generate'}
                             </button>
                         </div>
+
+                        {/* Progress Bar */}
+                        {generatingPodcast && (
+                            <div className="mb-4 bg-gray-50 rounded-lg p-3 border">
+                                <div className="flex justify-between items-center mb-2">
+                                    <span className="text-sm font-medium text-gray-700">
+                                        {podcastProgressMessage || 'Generating podcast...'}
+                                    </span>
+                                    <span className="text-sm text-gray-500 font-mono">
+                                        {Math.round(podcastProgress)}%
+                                    </span>
+                                </div>
+                                <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                                    <div
+                                        className="bg-gradient-to-r from-green-500 to-green-600 h-2 rounded-full transition-all duration-700 ease-out relative"
+                                        style={{ width: `${podcastProgress}%` }}
+                                    >
+                                        {generatingPodcast && podcastProgress > 0 && podcastProgress < 100 && (
+                                            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-30 animate-pulse"></div>
+                                        )}
+                                    </div>
+                                </div>
+                                {podcastProgress < 100 && (
+                                    <p className="text-xs text-gray-500 mt-2">
+                                        This may take 30-60 seconds for quality audio generation...
+                                    </p>
+                                )}
+                            </div>
+                        )}
 
                         <p className="text-sm text-gray-600 mb-3">
                             Create an AI-generated podcast from this document with natural conversation flow.
@@ -513,24 +754,44 @@ const ActionControlsPanel = ({
                                         <span className="text-sm font-medium text-green-800">Podcast Ready!</span>
                                     </div>
 
-                                    {/* Audio Player (Demo) */}
+                                    {/* HTML5 Audio Player */}
                                     <div className="bg-white rounded-lg p-3 border">
-                                        <div className="flex items-center space-x-3">
-                                            <button className="p-2 bg-green-600 text-white rounded-full hover:bg-green-700">
-                                                <Play className="h-4 w-4" />
-                                            </button>
-                                            <div className="flex-1">
-                                                <div className="w-full bg-gray-200 rounded-full h-2">
-                                                    <div className="bg-green-600 h-2 rounded-full" style={{ width: '0%' }}></div>
-                                                </div>
-                                                <div className="flex justify-between text-xs text-gray-500 mt-1">
-                                                    <span>0:00</span>
-                                                    <span>5:23</span>
-                                                </div>
+                                        <audio
+                                            controls
+                                            className="w-full"
+                                            preload="metadata"
+                                        >
+                                            <source src={audioUrl} type="audio/mpeg" />
+                                            Your browser does not support the audio element.
+                                        </audio>
+
+                                        <div className="flex justify-between items-center mt-2">
+                                            <span className="text-xs text-gray-500">AI-Generated Podcast</span>
+                                            <div className="flex items-center gap-2">
+                                                <button
+                                                    onClick={() => {
+                                                        const podcastCacheKey = activeDocumentId ? `${sessionId}_${activeDocumentId}` : sessionId;
+                                                        setPodcastCache(prev => {
+                                                            const newCache = new Map(prev);
+                                                            newCache.delete(podcastCacheKey);
+                                                            return newCache;
+                                                        });
+                                                        setAudioUrl(null);
+                                                    }}
+                                                    className="text-xs text-red-600 hover:text-red-700"
+                                                    title="Clear cached podcast"
+                                                >
+                                                    Clear Cache
+                                                </button>
+                                                <a
+                                                    href={audioUrl}
+                                                    download
+                                                    className="flex items-center text-xs text-green-600 hover:text-green-700"
+                                                >
+                                                    <Download className="h-3 w-3 mr-1" />
+                                                    Download
+                                                </a>
                                             </div>
-                                            <button className="p-2 text-gray-600 hover:text-gray-800">
-                                                <Download className="h-4 w-4" />
-                                            </button>
                                         </div>
                                     </div>
                                 </div>

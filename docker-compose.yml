@@ -2,11 +2,11 @@ version: '3.8'
 
 services:
   pdf-workbench:
-    build: 
+    build:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8080:8080"  # React frontend + API proxy
+      - "8080:8080" # React frontend + API proxy
     environment:
       - ADOBE_EMBED_API_KEY=${ADOBE_EMBED_API_KEY:-}
       - LLM_PROVIDER=${LLM_PROVIDER:-gemini}
@@ -19,7 +19,7 @@ services:
       - ./credentials:/credentials:ro
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/", "&&", "curl", "-f", "http://localhost:8000/health"]
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/", "&&", "curl", "-f", "http://localhost:8000/health" ]
       interval: 30s
       timeout: 10s
       retries: 3

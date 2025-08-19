@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Progress Bar Test</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+
+<body class="bg-gray-100 p-8">
+    <div class="max-w-md mx-auto bg-white rounded-lg p-6 shadow-lg">
+        <h2 class="text-xl font-bold mb-4">Podcast Generation Progress Test</h2>
+
+        <div class="mb-4 bg-gray-50 rounded-lg p-3 border">
+            <div class="flex justify-between items-center mb-2">
+                <span class="text-sm font-medium text-gray-700" id="message">
+                    Initializing podcast generation...
+                </span>
+                <span class="text-sm text-gray-500 font-mono" id="percentage">
+                    0%
+                </span>
+            </div>
+            <div class="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+                <div id="progress-bar"
+                    class="bg-gradient-to-r from-green-500 to-green-600 h-2 rounded-full transition-all duration-700 ease-out relative"
+                    style="width: 0%">
+                    <div class="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-30 animate-pulse"
+                        id="shimmer"></div>
+                </div>
+            </div>
+            <p class="text-xs text-gray-500 mt-2" id="time-estimate">
+                This may take 30-60 seconds for quality audio generation...
+            </p>
+        </div>
+
+        <button onclick="simulateProgress()" class="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700">
+            Test Progress Bar
+        </button>
+    </div>
+
+    <script>
+        function simulateProgress() {
+            const steps = [
+                { progress: 15, message: 'Initializing podcast generation...', delay: 500 },
+                { progress: 35, message: 'Analyzing content and generating insights...', delay: 2000 },
+                { progress: 50, message: 'Processing content...', delay: 1500 },
+                { progress: 70, message: 'Converting text to speech...', delay: 3000 },
+                { progress: 90, message: 'Finalizing audio...', delay: 1000 },
+                { progress: 100, message: 'Podcast generation complete!', delay: 500 }
+            ];
+
+            let currentStep = 0;
+
+            function nextStep() {
+                if (currentStep < steps.length) {
+                    const step = steps[currentStep];
+                    updateProgress(step.progress, step.message);
+                    currentStep++;
+                    setTimeout(nextStep, step.delay);
+                }
+            }
+
+            // Reset and start
+            updateProgress(0, 'Starting...');
+            setTimeout(nextStep, 200);
+        }
+
+        function updateProgress(progress, message) {
+            document.getElementById('progress-bar').style.width = progress + '%';
+            document.getElementById('percentage').textContent = Math.round(progress) + '%';
+            document.getElementById('message').textContent = message;
+
+            // Hide shimmer when complete
+            const shimmer = document.getElementById('shimmer');
+            if (progress >= 100) {
+                shimmer.style.display = 'none';
+                document.getElementById('time-estimate').textContent = 'Generation complete!';
+            } else {
+                shimmer.style.display = 'block';
+            }
+        }
+    </script>
+</body>
+
+</html>

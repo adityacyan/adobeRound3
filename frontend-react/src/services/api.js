@@ -1,6 +1,33 @@
 import axios from 'axios';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+// Smart API URL detection based on environment
+const getApiBaseUrl = () => {
+    // If REACT_APP_API_URL is explicitly set, use it
+    if (process.env.REACT_APP_API_URL) {
+        return process.env.REACT_APP_API_URL;
+    }
+
+    // Auto-detect based on current location
+    const currentHost = window.location.hostname;
+    const currentPort = window.location.port;
+
+    // If running on localhost:8080 (local dev), use backend on 8000
+    if (currentHost === 'localhost' && currentPort === '8080') {
+        return 'http://localhost:8000';
+    }
+
+    // If running on localhost:8080 (Docker), use relative path
+    if (currentHost === 'localhost' && currentPort === '8080' && process.env.NODE_ENV === 'production') {
+        return '/api';
+    }
+
+    // Default fallback
+    return 'http://localhost:8000';
+};
+
+const API_BASE_URL = getApiBaseUrl();
+
+console.log('🔗 API Base URL:', API_BASE_URL);
 
 // Create axios instance with default config
 const api = axios.create({

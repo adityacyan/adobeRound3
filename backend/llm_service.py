@@ -9,6 +9,17 @@ import os
 import logging
 from pydantic import BaseModel, ConfigDict
 
+# Google Cloud imports for service account authentication
+try:
+    from google.ai import generativelanguage as glm
+    from google.auth import default
+    from google.auth.transport.grpc import secure_authorized_channel
+    import grpc
+    GCP_AVAILABLE = True
+except ImportError:
+    GCP_AVAILABLE = False
+    glm = None
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -24,7 +35,7 @@ class InsightResponse:
     processing_time: float
 
 class LLMService:
-    """Service for generating insights using Google Gemini 2.5 Flash"""
+    """Service for generating insights using Google Gemini 2.5 Flash with dual authentication support"""
     
     def __init__(self):
         # Load environment variables
@@ -32,29 +43,117 @@ class LLMService:
         load_dotenv()
         
         self.api_key = os.getenv('GEMINI_API_KEY')
+        self.gcp_credentials = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
         self.model_name = os.getenv('GEMINI_MODEL', 'gemini-2.5-flash')
         
-        if not self.api_key:
-            logger.error("GEMINI_API_KEY not found in environment variables")
-            logger.error("Please ensure your .env file contains GEMINI_API_KEY")
-            raise ValueError("GEMINI_API_KEY is required")
-            
-        logger.info(f"Initializing LLM service with model: {self.model_name}")
-        logger.info(f"API key found: {self.api_key[:10]}...")
+        # Initialize authentication mode
+        self.auth_mode = None
+        self.model = None
+        self.gcp_client = None
         
-        # Configure Gemini
-        try:
-            genai.configure(api_key=self.api_key)
-            self.model = genai.GenerativeModel(self.model_name)
-            logger.info("Gemini model initialized successfully")
-        except Exception as e:
-            logger.error(f"Failed to initialize Gemini model: {e}")
-            raise
+        self._initialize_model()
         
         # Response cache for performance optimization
         self.cache: Dict[str, InsightResponse] = {}
         self.cache_expiry = timedelta(hours=1)  # Cache expires after 1 hour
         
+    def _initialize_model(self):
+        """Initialize the model based on available credentials"""
+        
+        # Try GCP service account first (evaluator mode)
+        if self.gcp_credentials and os.path.exists(self.gcp_credentials) and GCP_AVAILABLE:
+            try:
+                logger.info("Attempting GCP service account authentication...")
+                self._initialize_gcp_mode()
+                return
+            except Exception as e:
+                logger.warning(f"GCP authentication failed: {e}")
+                logger.info("Falling back to API key mode...")
+        
+        # Fall back to API key mode (student/local mode)
+        if self.api_key:
+            try:
+                logger.info("Using API key authentication...")
+                self._initialize_api_key_mode()
+                return
+            except Exception as e:
+                logger.error(f"API key authentication failed: {e}")
+                raise
+        
+        # No valid credentials found
+        logger.error("No valid credentials found")
+        logger.error("Please provide either GEMINI_API_KEY or GOOGLE_APPLICATION_CREDENTIALS")
+        raise ValueError("No valid authentication credentials found")
+    
+    def _initialize_gcp_mode(self):
+        """Initialize GCP service account mode"""
+        if not GCP_AVAILABLE:
+            raise ImportError("Google Cloud dependencies not available")
+            
+        # Set up GCP authentication
+        credentials, project = default()
+        
+        # Create secure channel
+        channel = secure_authorized_channel(credentials, None, 'generativelanguage.googleapis.com:443')
+        
+        # Initialize the GenerativeService client
+        self.gcp_client = glm.GenerativeServiceClient(transport=grpc.secure_channel(
+            'generativelanguage.googleapis.com:443', grpc.ssl_channel_credentials()))
+        
+        self.auth_mode = "gcp"
+        logger.info(f"GCP mode initialized successfully with model: {self.model_name}")
+        logger.info(f"Using credentials: {self.gcp_credentials}")
+    
+    def _initialize_api_key_mode(self):
+        """Initialize API key mode"""
+        if not self.api_key:
+            raise ValueError("GEMINI_API_KEY is required for API key mode")
+            
+        logger.info(f"Initializing LLM service with model: {self.model_name}")
+        logger.info(f"API key found: {self.api_key[:10]}...")
+        
+        # Configure Gemini with API key
+        genai.configure(api_key=self.api_key)
+        self.model = genai.GenerativeModel(self.model_name)
+        
+        self.auth_mode = "api_key"
+        logger.info("API key mode initialized successfully")
+        
+    def _generate_content(self, prompt: str) -> Optional[str]:
+        """Generate content using the appropriate authentication mode"""
+        try:
+            if self.auth_mode == "api_key":
+                # Use the existing genai library
+                response = self.model.generate_content(prompt)
+                return response.text if response else None
+                
+            elif self.auth_mode == "gcp":
+                # Use GCP GenerativeService client
+                request = glm.GenerateContentRequest(
+                    model=f"models/{self.model_name}",
+                    contents=[glm.Content(
+                        parts=[glm.Part(text=prompt)]
+                    )]
+                )
+                
+                response = self.gcp_client.generate_content(request=request)
+                
+                if response.candidates and len(response.candidates) > 0:
+                    candidate = response.candidates[0]
+                    if candidate.content and candidate.content.parts:
+                        return candidate.content.parts[0].text
+                
+                logger.warning("No valid response from GCP GenerativeService")
+                return None
+                
+            else:
+                logger.error(f"Unknown authentication mode: {self.auth_mode}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error generating content in {self.auth_mode} mode: {e}")
+            return None
+    
     def _generate_cache_key(self, content: str, insight_type: str = "full") -> str:
         """Generate cache key for content"""
         content_hash = hashlib.md5(f"{content}_{insight_type}".encode()).hexdigest()
@@ -117,12 +216,13 @@ class LLMService:
             return self.cache[cache_key]
         
         try:
-            # Generate insights using Gemini
+            # Generate insights using the appropriate authentication mode
             prompt = self._create_insight_prompt(content)
-            logger.info("Sending request to Gemini API...")
-            response = self.model.generate_content(prompt)
+            logger.info(f"Sending request to Gemini API using {self.auth_mode} mode...")
             
-            if not response or not response.text:
+            response_text = self._generate_content(prompt)
+            
+            if not response_text:
                 logger.error("Empty response from Gemini API")
                 return None
             
@@ -131,13 +231,13 @@ class LLMService:
             # Parse JSON response
             try:
                 # Clean up response text (remove markdown code blocks if present)
-                response_text = response.text.strip()
-                if response_text.startswith('```json'):
-                    response_text = response_text[7:]
-                if response_text.endswith('```'):
-                    response_text = response_text[:-3]
+                clean_response = response_text.strip()
+                if clean_response.startswith('```json'):
+                    clean_response = clean_response[7:]
+                if clean_response.endswith('```'):
+                    clean_response = clean_response[:-3]
                 
-                insights_data = json.loads(response_text)
+                insights_data = json.loads(clean_response)
                 
                 # Validate required keys
                 required_keys = ['takeaways', 'contradictions', 'examples', 'did_you_know']
@@ -164,7 +264,7 @@ class LLMService:
                 
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse JSON response: {e}")
-                logger.error(f"Raw response: {response.text}")
+                logger.error(f"Raw response: {response_text}")
                 return None
                 
         except Exception as e:
@@ -234,16 +334,16 @@ class LLMService:
                 Please provide a well-structured summary that covers the document's main themes and important information.
                 """
             
-            logger.info(f"Generating {mode} summary with Gemini...")
+            logger.info(f"Generating {mode} summary with Gemini using {self.auth_mode} mode...")
             
             # Generate response
-            response = self.model.generate_content(prompt)
+            response_text = self._generate_content(prompt)
             
-            if not response or not response.text:
+            if not response_text:
                 logger.warning("Empty response from Gemini for summary")
                 return None
             
-            summary_text = response.text.strip()
+            summary_text = response_text.strip()
             
             # Cache the summary (store in takeaways field for consistency)
             processing_time = time.time() - start_time
@@ -264,6 +364,16 @@ class LLMService:
             logger.error(f"Failed to generate {mode} summary: {e}")
             return None
     
+    def get_auth_info(self) -> Dict[str, Any]:
+        """Get authentication mode and status information"""
+        return {
+            "auth_mode": self.auth_mode,
+            "model_name": self.model_name,
+            "gcp_available": GCP_AVAILABLE,
+            "has_api_key": bool(self.api_key),
+            "has_gcp_credentials": bool(self.gcp_credentials and os.path.exists(self.gcp_credentials) if self.gcp_credentials else False)
+        }
+    
     def clear_cache(self):
         """Clear the insights cache"""
         self.cache.clear()
@@ -273,7 +383,8 @@ class LLMService:
         """Get cache statistics"""
         return {
             "cache_size": len(self.cache),
-            "cache_keys": list(self.cache.keys())
+            "cache_keys": list(self.cache.keys()),
+            "auth_info": self.get_auth_info()
         }
 
 # Global service instance
