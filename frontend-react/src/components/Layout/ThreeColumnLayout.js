@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { v4 as uuidv4 } from 'uuid';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 import InsightsPanel from '../Sidebar/InsightsPanel';
 import RelatedContentPanel from '../Sidebar/RelatedContentPanel';
 import ActionControlsPanel from '../Sidebar/ActionControlsPanel';
@@ -17,6 +18,9 @@ const ThreeColumnLayout = () => {
     const [relatedContent, setRelatedContent] = useState([]);
     const [loading, setLoading] = useState(false);
     const [wsService, setWsService] = useState(null);
+    const [uploadSectionExpanded, setUploadSectionExpanded] = useState(true);
+    const [webSocketConnected, setWebSocketConnected] = useState(false);
+    const [lastWebSocketMessage, setLastWebSocketMessage] = useState(null);
 
     // Initialize session on mount
     useEffect(() => {
@@ -31,10 +35,32 @@ const ThreeColumnLayout = () => {
 
                 ws.on('processing_update', (data) => {
                     console.log('Processing update:', data);
-                    // Refresh documents when processing completes
-                    if (data.status === 'completed') {
+                    setLastWebSocketMessage(Date.now());
+                    // Refresh documents when processing completes or fails, or on significant progress
+                    if (data.status === 'completed' || data.status === 'failed' ||
+                        data.status === 'upload_completed' || data.progress === 100) {
                         loadDocuments(sessionData.session_id);
                     }
+                });
+
+                ws.on('connection_established', (data) => {
+                    console.log('WebSocket connection established:', data);
+                    setWebSocketConnected(true);
+                });
+
+                ws.on('connected', () => {
+                    console.log('WebSocket connection opened');
+                    setWebSocketConnected(true);
+                });
+
+                ws.on('disconnected', () => {
+                    console.log('WebSocket connection closed');
+                    setWebSocketConnected(false);
+                });
+
+                ws.on('error', (error) => {
+                    console.error('WebSocket connection error:', error);
+                    setWebSocketConnected(false);
                 });
 
                 setWsService(ws);
@@ -74,6 +100,29 @@ const ThreeColumnLayout = () => {
             loadDocuments();
         }
     }, [sessionId]);
+
+    // Polling fallback (only when WebSocket is not working or no recent messages)
+    useEffect(() => {
+        if (!sessionId) return;
+
+        const pollInterval = setInterval(() => {
+            const hasProcessingDocs = documents.some(doc =>
+                doc.processing_status === 'processing' ||
+                doc.processing_status === 'pending'
+            );
+
+            const webSocketStale = !webSocketConnected ||
+                (lastWebSocketMessage && Date.now() - lastWebSocketMessage > 15000); // 15 seconds
+
+            // Only poll if we have processing docs AND WebSocket seems stale
+            if (hasProcessingDocs && webSocketStale) {
+                console.log('Fallback polling for document updates (WebSocket inactive)...');
+                loadDocuments();
+            }
+        }, 10000); // Poll every 10 seconds (less aggressive)
+
+        return () => clearInterval(pollInterval);
+    }, [sessionId, documents, webSocketConnected, lastWebSocketMessage]);
 
     const handleUploadComplete = () => {
         loadDocuments();
@@ -174,13 +223,29 @@ const ThreeColumnLayout = () => {
                         </div>
                     </div>
                     {/* Always show upload area in right sidebar */}
-                    <div className="border-t border-gray-200 p-4">
-                        <h3 className="text-sm font-medium text-gray-700 mb-3">📁 Upload More Documents</h3>
-                        <UploadArea
-                            sessionId={sessionId}
-                            onUploadComplete={handleUploadComplete}
-                            compact={true}
-                        />
+                    <div className="border-t border-gray-200">
+                        <div
+                            className="p-4 cursor-pointer hover:bg-gray-50 transition-colors duration-200"
+                            onClick={() => setUploadSectionExpanded(!uploadSectionExpanded)}
+                        >
+                            <div className="flex items-center justify-between">
+                                <h3 className="text-sm font-medium text-gray-700">📁 Upload More Documents</h3>
+                                {uploadSectionExpanded ? (
+                                    <ChevronUp className="h-4 w-4 text-gray-500" />
+                                ) : (
+                                    <ChevronDown className="h-4 w-4 text-gray-500" />
+                                )}
+                            </div>
+                        </div>
+                        {uploadSectionExpanded && (
+                            <div className="px-4 pb-4">
+                                <UploadArea
+                                    sessionId={sessionId}
+                                    onUploadComplete={handleUploadComplete}
+                                    compact={true}
+                                />
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>

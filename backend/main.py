@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Optional, List
 import os
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, Form, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -443,7 +443,16 @@ async def process_document(document_id: str, session_id: str):
     # Set up progress callback to update document status
     def progress_callback(progress: ProcessingProgress):
         """Update document progress based on processor updates."""
-        document["processing_status"] = progress.stage if progress.stage != "starting" else "processing"
+        # Map processing stages to standard status values
+        if progress.stage in ["starting", "extracting", "chunking", "embedding"]:
+            document["processing_status"] = "processing"
+        elif progress.stage == "completed":
+            document["processing_status"] = "completed"
+        elif progress.stage == "failed":
+            document["processing_status"] = "failed"
+        else:
+            document["processing_status"] = "processing"  # fallback for any other stages
+            
         document["processing_progress"] = progress.progress
         
         if progress.stage == "starting":
@@ -456,6 +465,14 @@ async def process_document(document_id: str, session_id: str):
         
         # Update session status
         update_session_processing_status(session_id)
+        
+        # Send WebSocket notification
+        asyncio.create_task(send_processing_update(
+            session_id, 
+            progress.stage, 
+            progress.message, 
+            int(progress.progress * 100)
+        ))
         
         # Log progress for monitoring
         logger.info(f"Document {document_id} progress: {progress.stage} - {progress.progress:.1%} - {progress.message}")
@@ -484,6 +501,17 @@ async def process_document(document_id: str, session_id: str):
         document["quality_score"] = processed_doc.quality_score
         document["processing_metadata"] = processed_doc.metadata
         
+        # Update session status
+        update_session_processing_status(session_id)
+        
+        # Send completion notification via WebSocket
+        asyncio.create_task(send_processing_update(
+            session_id, 
+            "completed", 
+            f"Document '{document['original_filename']}' processed successfully", 
+            100
+        ))
+        
         logger.info(f"Successfully processed document {document_id} in {processed_doc.processing_time_ms}ms using {processed_doc.processing_method}")
         
     except Exception as e:
@@ -492,6 +520,18 @@ async def process_document(document_id: str, session_id: str):
         document["processing_end_time"] = datetime.now()
         document["error_message"] = str(e)
         document["processing_progress"] = 0.0
+        
+        # Update session status
+        update_session_processing_status(session_id)
+        
+        # Send failure notification via WebSocket
+        asyncio.create_task(send_processing_update(
+            session_id, 
+            "failed", 
+            f"Failed to process '{document['original_filename']}': {str(e)}", 
+            0
+        ))
+        
         logger.error(f"Failed to process document {document_id}: {e}")
     
     finally:
@@ -721,6 +761,14 @@ async def upload_bulk_pdfs(
     processing_started = len(uploaded_documents) > 0
     if processing_started:
         start_background_processing(session_id)
+        
+        # Send upload completion notification via WebSocket
+        asyncio.create_task(send_processing_update(
+            session_id, 
+            "upload_completed", 
+            f"Successfully uploaded {len(uploaded_documents)} PDF files. Processing started.", 
+            None
+        ))
     
     return UploadResponse(
         session_id=session_id,
@@ -1846,6 +1894,91 @@ async def clear_cache():
         return {"error": "LLM service not available"}
     llm_service.clear_cache()
     return {"success": True, "message": "Cache cleared"}
+
+# WebSocket Connection Manager
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: Dict[str, WebSocket] = {}
+
+    async def connect(self, websocket: WebSocket, session_id: str):
+        await websocket.accept()
+        self.active_connections[session_id] = websocket
+        logger.info(f"WebSocket connected for session: {session_id}")
+
+    def disconnect(self, session_id: str):
+        if session_id in self.active_connections:
+            del self.active_connections[session_id]
+            logger.info(f"WebSocket disconnected for session: {session_id}")
+
+    async def send_personal_message(self, message: dict, session_id: str):
+        if session_id in self.active_connections:
+            try:
+                await self.active_connections[session_id].send_json(message)
+                logger.debug(f"WebSocket message sent to {session_id}: {message}")
+            except Exception as e:
+                logger.error(f"Failed to send WebSocket message to {session_id}: {e}")
+                self.disconnect(session_id)
+        else:
+            logger.warning(f"No active WebSocket connection for session {session_id}")
+
+manager = ConnectionManager()
+
+@app.websocket("/ws/{session_id}")
+async def websocket_endpoint(websocket: WebSocket, session_id: str):
+    """WebSocket endpoint for real-time updates"""
+    
+    # Validate session exists
+    if session_id not in sessions:
+        await websocket.close(code=4004, reason="Session not found")
+        return
+    
+    try:
+        await manager.connect(websocket, session_id)
+        
+        # Send initial connection confirmation
+        await manager.send_personal_message({
+            "type": "connection_established",
+            "session_id": session_id,
+            "timestamp": datetime.now().isoformat()
+        }, session_id)
+        
+        # Keep connection alive
+        while True:
+            try:
+                # Wait for ping/keepalive messages
+                data = await websocket.receive_text()
+                # Echo back for ping/pong
+                await manager.send_personal_message({
+                    "type": "pong",
+                    "timestamp": datetime.now().isoformat()
+                }, session_id)
+            except WebSocketDisconnect:
+                break
+            except Exception as e:
+                logger.error(f"WebSocket error for session {session_id}: {e}")
+                break
+                
+    except Exception as e:
+        logger.error(f"WebSocket connection error for session {session_id}: {e}")
+    finally:
+        manager.disconnect(session_id)
+
+# Helper function to send processing updates via WebSocket
+async def send_processing_update(session_id: str, status: str, message: str = None, progress: int = None):
+    """Send processing updates to connected WebSocket clients"""
+    update_data = {
+        "type": "processing_update",
+        "status": status,
+        "timestamp": datetime.now().isoformat()
+    }
+    
+    if message:
+        update_data["message"] = message
+    if progress is not None:
+        update_data["progress"] = progress
+    
+    logger.info(f"Sending WebSocket update to session {session_id}: {update_data}")
+    await manager.send_personal_message(update_data, session_id)
 
 if __name__ == "__main__":
     import uvicorn

@@ -147,6 +147,14 @@ export class WebSocketService {
             this.ws.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
+                    console.log('WebSocket message received:', data);
+
+                    // Emit specific event based on message type
+                    if (data.type) {
+                        this.emit(data.type, data);
+                    }
+
+                    // Also emit generic message event
                     this.emit('message', data);
                 } catch (error) {
                     console.error('Failed to parse WebSocket message:', error);

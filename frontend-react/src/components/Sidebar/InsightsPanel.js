@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Brain, TrendingUp, AlertTriangle, BookOpen, Lightbulb, RefreshCw } from 'lucide-react';
+import { Brain, TrendingUp, AlertTriangle, BookOpen, Lightbulb, RefreshCw, ChevronDown, ChevronUp } from 'lucide-react';
 import { getDocumentContent, generateInsights } from '../../services/api';
 
 const InsightsPanel = ({
@@ -12,6 +12,12 @@ const InsightsPanel = ({
     const [generating, setGenerating] = useState(false);
     const [error, setError] = useState(null);
     const [cache, setCache] = useState(new Map());
+    const [expandedSections, setExpandedSections] = useState({
+        takeaways: false,
+        contradictions: false,
+        examples: false,
+        didYouKnow: false
+    });
 
     useEffect(() => {
         if (activeDocumentId && sessionId) {
@@ -74,29 +80,48 @@ const InsightsPanel = ({
         loadInsights();
     };
 
-    const InsightSection = ({ title, items, icon: Icon, color, emptyMessage }) => (
+    const toggleSection = (sectionKey) => {
+        setExpandedSections(prev => ({
+            ...prev,
+            [sectionKey]: !prev[sectionKey]
+        }));
+    };
+
+    const InsightSection = ({ title, items, icon: Icon, color, emptyMessage, sectionKey }) => (
         <div className="mb-6">
-            <div className="flex items-center justify-between mb-3">
+            <div
+                className="flex items-center justify-between mb-3 cursor-pointer hover:bg-gray-50 p-2 rounded-lg transition-colors"
+                onClick={() => toggleSection(sectionKey)}
+            >
                 <div className="flex items-center">
                     <Icon className={`h-5 w-5 mr-2 ${color}`} />
                     <h4 className="font-medium text-gray-700">{title}</h4>
                 </div>
-                <span className="text-xs text-gray-500">{items?.length || 0}</span>
+                <div className="flex items-center space-x-2">
+                    <span className="text-xs text-gray-500">{items?.length || 0}</span>
+                    {expandedSections[sectionKey] ? (
+                        <ChevronUp className="h-4 w-4 text-gray-500" />
+                    ) : (
+                        <ChevronDown className="h-4 w-4 text-gray-500" />
+                    )}
+                </div>
             </div>
 
-            <div className="space-y-2">
-                {items && items.length > 0 ? (
-                    items.map((item, index) => (
-                        <div key={index} className="p-3 bg-gray-50 rounded-lg text-sm text-gray-700 leading-relaxed">
-                            • {item}
+            {expandedSections[sectionKey] && (
+                <div className="space-y-2">
+                    {items && items.length > 0 ? (
+                        items.map((item, index) => (
+                            <div key={index} className="p-3 bg-gray-50 rounded-lg text-sm text-gray-700 leading-relaxed">
+                                • {item}
+                            </div>
+                        ))
+                    ) : (
+                        <div className="p-3 bg-gray-50 rounded-lg text-sm text-gray-500 italic">
+                            {emptyMessage}
                         </div>
-                    ))
-                ) : (
-                    <div className="p-3 bg-gray-50 rounded-lg text-sm text-gray-500 italic">
-                        {emptyMessage}
-                    </div>
-                )}
-            </div>
+                    )}
+                </div>
+            )}
         </div>
     );
 
@@ -155,6 +180,7 @@ const InsightsPanel = ({
                         icon={TrendingUp}
                         color="text-green-600"
                         emptyMessage="No key takeaways found"
+                        sectionKey="takeaways"
                     />
 
                     <InsightSection
@@ -163,6 +189,7 @@ const InsightsPanel = ({
                         icon={AlertTriangle}
                         color="text-red-600"
                         emptyMessage="No contradictions found"
+                        sectionKey="contradictions"
                     />
 
                     <InsightSection
@@ -171,6 +198,7 @@ const InsightsPanel = ({
                         icon={BookOpen}
                         color="text-blue-600"
                         emptyMessage="No examples found"
+                        sectionKey="examples"
                     />
 
                     <InsightSection
@@ -179,6 +207,7 @@ const InsightsPanel = ({
                         icon={Lightbulb}
                         color="text-yellow-600"
                         emptyMessage="No interesting facts found"
+                        sectionKey="didYouKnow"
                     />
 
                     {insights.processing_time && (

@@ -21,8 +21,8 @@ function App() {
         };
 
         checkHealth();
-        // Check health every 30 seconds
-        const interval = setInterval(checkHealth, 30000);
+        // Check health every 2 minutes (less aggressive)
+        const interval = setInterval(checkHealth, 120000);
         return () => clearInterval(interval);
     }, []);
 
