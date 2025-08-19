@@ -290,6 +290,17 @@ const PDFViewer = ({
 
             if (!selectedText || selectedText.length < 2) return null;
 
+            // Check if the selection is within the PDF viewer container
+            const container = range.commonAncestorContainer;
+            const pdfContainer = container.nodeType === Node.TEXT_NODE
+                ? container.parentElement?.closest('.react-pdf__Document')
+                : container.closest?.('.react-pdf__Document');
+
+            if (!pdfContainer) {
+                console.log('Text selection outside PDF viewer, ignoring');
+                return null;
+            }
+
             const rects = range.getClientRects();
             if (rects.length === 0) return null;
 
@@ -331,15 +342,31 @@ const PDFViewer = ({
         }
     }, [getHighlightCoords, onTextSelection]);
 
-    // Set up text selection listeners for PDF.js
+    // Set up text selection listeners for PDF.js - only within PDF container
     useEffect(() => {
         if (!useAdobeEmbed) {
             const handleMouseUp = (event) => {
-                setTimeout(handlePdfJsTextSelection, 50);
+                // Check if the mouse up event happened inside the PDF viewer container
+                const pdfContainer = event.target.closest('.react-pdf__Document');
+                if (pdfContainer) {
+                    setTimeout(handlePdfJsTextSelection, 50);
+                }
             };
 
             const handleSelectionChange = () => {
-                setTimeout(handlePdfJsTextSelection, 10);
+                // Check if the current selection is within the PDF viewer
+                const selection = window.getSelection();
+                if (selection.rangeCount > 0) {
+                    const range = selection.getRangeAt(0);
+                    const container = range.commonAncestorContainer;
+                    const pdfContainer = container.nodeType === Node.TEXT_NODE
+                        ? container.parentElement?.closest('.react-pdf__Document')
+                        : container.closest?.('.react-pdf__Document');
+
+                    if (pdfContainer) {
+                        setTimeout(handlePdfJsTextSelection, 10);
+                    }
+                }
             };
 
             document.addEventListener('mouseup', handleMouseUp);

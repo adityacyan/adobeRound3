@@ -19,6 +19,7 @@ const ThreeColumnLayout = () => {
     const [loading, setLoading] = useState(false);
     const [wsService, setWsService] = useState(null);
     const [uploadSectionExpanded, setUploadSectionExpanded] = useState(true);
+    const [insightsSectionExpanded, setInsightsSectionExpanded] = useState(false);
     const [webSocketConnected, setWebSocketConnected] = useState(false);
     const [lastWebSocketMessage, setLastWebSocketMessage] = useState(null);
 
@@ -164,18 +165,38 @@ const ThreeColumnLayout = () => {
             <div className="flex h-[calc(100vh-80px)]">
                 {/* Left Sidebar - Insights & Related Content */}
                 <div className="w-80 min-w-80 bg-white border-r border-gray-200 flex flex-col">
-                    <div className="flex-1 overflow-y-auto">
-                        <div className="p-4">
-                            <InsightsPanel
-                                sessionId={sessionId}
-                                activeDocumentId={activeDocumentId}
-                                insights={insights}
-                                setInsights={setInsights}
-                                loading={loading}
-                            />
+                    {/* AI Insights Section */}
+                    <div className="border-b border-gray-200">
+                        <div
+                            className="p-4 cursor-pointer hover:bg-gray-50 transition-colors duration-200"
+                            onClick={() => setInsightsSectionExpanded(!insightsSectionExpanded)}
+                        >
+                            <div className="flex items-center justify-between">
+                                <h3 className="text-sm font-medium text-gray-700">🧠 AI Insights</h3>
+                                {insightsSectionExpanded ? (
+                                    <ChevronUp className="h-4 w-4 text-gray-500" />
+                                ) : (
+                                    <ChevronDown className="h-4 w-4 text-gray-500" />
+                                )}
+                            </div>
                         </div>
+                        {insightsSectionExpanded && (
+                            <div className="overflow-y-auto max-h-96">
+                                <div className="px-4 pb-4">
+                                    <InsightsPanel
+                                        sessionId={sessionId}
+                                        activeDocumentId={activeDocumentId}
+                                        insights={insights}
+                                        setInsights={setInsights}
+                                        loading={loading}
+                                    />
+                                </div>
+                            </div>
+                        )}
                     </div>
-                    <div className="flex-1 overflow-y-auto border-t border-gray-200">
+
+                    {/* Related Content Section */}
+                    <div className="flex-1 overflow-y-auto">
                         <div className="p-4">
                             <RelatedContentPanel
                                 sessionId={sessionId}
