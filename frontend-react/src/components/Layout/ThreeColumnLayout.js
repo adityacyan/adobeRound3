@@ -8,6 +8,7 @@ import PDFViewer from '../PDFViewer/PDFViewer';
 import UploadArea from '../PDFViewer/UploadArea';
 import { createSession, getSessionDocuments } from '../../services/api';
 import { WebSocketService } from '../../services/api';
+import logo from '../../assets/logo.png'; 
 
 const ThreeColumnLayout = () => {
     const [sessionId, setSessionId] = useState(null);
@@ -159,10 +160,11 @@ const ThreeColumnLayout = () => {
                 <div className="max-w-full mx-auto px-4 sm:px-6 lg:px-8">
                     <div className="flex justify-between items-center py-4">
                         <div className="flex items-center">
-                            <h1 className="text-2xl font-bold text-gray-900">📄 PDF Analysis Workbench</h1>
-                            <span className="ml-3 text-sm text-gray-500 bg-gray-100 px-2 py-1 rounded">
+                            <img src={logo} alt="Logo" className="h-10 w-auto mr-3" />
+                            <h1 className="workbench-heading"> PDF Analysis Workbench</h1>
+                            {/* <span className="ml-3 text-sm text-gray-500 bg-gray-100 px-2 py-1 rounded">
                                 React + FastAPI
-                            </span>
+                            </span> */}
                         </div>
                         <div className="flex items-center space-x-4">
                             <div className="text-sm text-gray-500">

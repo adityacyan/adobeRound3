@@ -169,11 +169,11 @@ const UploadArea = ({ sessionId, onUploadComplete, compact = false }) => {
                 {!uploading && !compact && (
                     <div className="mt-8 text-center">
                         <h4 className="text-lg font-medium text-gray-700 mb-4">
-                            🚀 What happens after upload?
+                            What happens after upload?
                         </h4>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
                             <div className="bg-blue-50 p-4 rounded-lg">
-                                <div className="text-blue-600 text-2xl mb-2">📄</div>
+                                <div className="text-blue-600 text-2xl mb-2">📚</div>
                                 <h5 className="font-medium text-gray-700">PDF Processing</h5>
                                 <p className="text-gray-600">Text extraction & section identification</p>
                             </div>
