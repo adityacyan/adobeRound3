@@ -42,10 +42,10 @@ if "%1"=="run" (
     docker run -d ^
         --name pdf-workbench ^
         -p 8080:8080 ^
-        -e GEMINI_API_KEY="%GEMINI_KEY%" ^
-        -e AZURE_TTS_KEY="%AZURE_TTS_KEY%" ^
-        -e AZURE_TTS_ENDPOINT="%AZURE_TTS_ENDPOINT%" ^
-        -e ADOBE_EMBED_API_KEY="%ADOBE_EMBED_KEY%" ^
+        --env GEMINI_API_KEY="%GEMINI_KEY%" ^
+        --env AZURE_TTS_KEY="%AZURE_TTS_KEY%" ^
+        --env AZURE_TTS_ENDPOINT="%AZURE_TTS_ENDPOINT%" ^
+        --env ADOBE_EMBED_API_KEY="%ADOBE_EMBED_KEY%" ^
         pdf-workbench:latest
     
     if not errorlevel 1 (
