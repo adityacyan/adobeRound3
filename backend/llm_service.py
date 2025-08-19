@@ -191,6 +191,79 @@ class LLMService:
         insights = self.generate_insights(content)
         return insights.did_you_know if insights else []
     
+    def generate_summary(self, content: str, mode: str = "document") -> Optional[str]:
+        """
+        Generate a summary of the given content
+        
+        Args:
+            content: Text content to summarize
+            mode: Either "selection" or "document" to adjust summary style
+            
+        Returns:
+            Generated summary text or None if failed
+        """
+        start_time = time.time()
+        
+        # Create cache key for summary
+        cache_key = self._generate_cache_key(content, f"summary_{mode}")
+        
+        # Check cache first
+        if self._is_cache_valid(cache_key):
+            logger.info(f"Returning cached summary for {mode} mode")
+            cached_response = self.cache[cache_key]
+            return cached_response.takeaways[0] if cached_response.takeaways else None
+        
+        try:
+            # Create prompt based on mode
+            if mode == "selection":
+                prompt = f"""
+                Provide a concise summary of the following selected text. Focus on the main points and key information in 2-3 sentences.
+                
+                Selected text:
+                {content[:4000]}
+                
+                Please provide a clear, concise summary that captures the essential information from this selection.
+                """
+            else:  # document mode
+                prompt = f"""
+                Provide a comprehensive summary of the following document content. Include the main topics, key findings, and important conclusions in 4-6 sentences.
+                
+                Document content:
+                {content[:8000]}
+                
+                Please provide a well-structured summary that covers the document's main themes and important information.
+                """
+            
+            logger.info(f"Generating {mode} summary with Gemini...")
+            
+            # Generate response
+            response = self.model.generate_content(prompt)
+            
+            if not response or not response.text:
+                logger.warning("Empty response from Gemini for summary")
+                return None
+            
+            summary_text = response.text.strip()
+            
+            # Cache the summary (store in takeaways field for consistency)
+            processing_time = time.time() - start_time
+            cached_summary = InsightResponse(
+                takeaways=[summary_text],
+                contradictions=[],
+                examples=[],
+                did_you_know=[],
+                timestamp=datetime.now().isoformat(),
+                processing_time=processing_time
+            )
+            self.cache[cache_key] = cached_summary
+            
+            logger.info(f"Generated {mode} summary in {processing_time:.2f}s")
+            return summary_text
+            
+        except Exception as e:
+            logger.error(f"Failed to generate {mode} summary: {e}")
+            return None
+    
     def clear_cache(self):
         """Clear the insights cache"""
         self.cache.clear()

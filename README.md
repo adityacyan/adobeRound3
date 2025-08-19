@@ -58,7 +58,9 @@ A web-based PDF document intelligence system designed for the Adobe India Hackat
    python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
    
    # Terminal 2 - Frontend
-   streamlit run frontend/main.py --server.port 8080 --server.address 0.0.0.0
+   cd frontend-react
+   npm start
+   
    ```
 
 4. **Access Application**

@@ -28,6 +28,7 @@ import re
 from .document_processor import document_processor, ProcessingProgress
 from .embedding_service import embedding_service, SearchResult
 from .search_engine import search_engine, EnhancedSearchResult, SearchContext
+from .llm_service import get_llm_service
 from .llm_service import get_llm_service, InsightResponse
 
 # Configure logging
@@ -88,6 +89,20 @@ class UploadResponse(BaseModel):
     total_documents: int
     processing_started: bool
     message: str
+
+class SummaryRequest(BaseModel):
+    """Request model for content summarization."""
+    content: str
+    mode: str = "document"  # "selection" or "document"
+    document_id: Optional[str] = None
+
+class SummaryResponse(BaseModel):
+    """Response model for content summarization."""
+    summary: str
+    mode: str
+    content_length: int
+    processing_time: float
+    timestamp: datetime
 
 # Application startup time for uptime calculation
 startup_time = time.time()
@@ -1299,6 +1314,86 @@ async def get_search_stats():
         "document_processor": document_processor.get_processing_stats(),
         "search_engine": search_engine.get_stats()
     }
+
+@app.post("/session/{session_id}/summary", response_model=SummaryResponse)
+async def generate_summary(session_id: str, request: SummaryRequest):
+    """
+    Generate a summary of content using LLM service.
+    Supports both selection and document mode summarization.
+    Requirements: 2.2.3, 2.2.4, 2.2.5, 2.2.6, 2.2.7
+    """
+    # Validate session
+    session = sessions.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found or expired")
+    
+    # Get LLM service
+    llm = get_llm_service()
+    if not llm:
+        raise HTTPException(status_code=503, detail="LLM service not available")
+    
+    # Validate mode
+    if request.mode not in ["selection", "document"]:
+        raise HTTPException(status_code=400, detail="Mode must be 'selection' or 'document'")
+    
+    start_time = time.time()
+    content = request.content
+    
+    try:
+        # For document mode, get the full document content automatically
+        if request.mode == "document" and request.document_id:
+            logger.info(f"Document mode: retrieving full content for document {request.document_id}")
+            
+            # Find the document in the session
+            documents = session.get("documents", [])
+            document = next((doc for doc in documents if doc.get("document_id") == request.document_id), None)
+            
+            if not document:
+                raise HTTPException(status_code=404, detail="Document not found in session")
+            
+            if document.get("processing_status") != "completed":
+                raise HTTPException(status_code=400, detail="Document processing not completed")
+            
+            # Get all section content
+            sections = document.get("sections", [])
+            full_content = ""
+            
+            for section in sections:
+                section_content = section.get("content", "")
+                if section_content.strip():
+                    full_content += section_content + "\n\n"
+            
+            if not full_content.strip():
+                raise HTTPException(status_code=400, detail="No content available in document")
+            
+            content = full_content.strip()
+            logger.info(f"Retrieved {len(content)} characters from document {request.document_id}")
+        
+        # Validate content
+        if not content or not content.strip():
+            raise HTTPException(status_code=400, detail="Content cannot be empty")
+        
+        # Generate summary
+        summary = llm.generate_summary(content, request.mode)
+        
+        if not summary:
+            raise HTTPException(status_code=500, detail="Failed to generate summary")
+        
+        processing_time = time.time() - start_time
+        
+        logger.info(f"Generated {request.mode} summary in {processing_time:.2f}s for session {session_id}")
+        
+        return SummaryResponse(
+            summary=summary,
+            mode=request.mode,
+            content_length=len(content),
+            processing_time=processing_time,
+            timestamp=datetime.now()
+        )
+        
+    except Exception as e:
+        logger.error(f"Summary generation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Summary generation failed: {str(e)}")
 
 class EnhancedSearchRequest(BaseModel):
     """Request model for enhanced semantic search with multi-tier strategy."""

@@ -198,4 +198,20 @@ export class WebSocketService {
     }
 }
 
+export const generateSummary = async (sessionId, content, mode = 'document', documentId = null) => {
+    try {
+        console.log(`Generating ${mode} summary...`);
+        const response = await api.post(`/session/${sessionId}/summary`, {
+            content,
+            mode,
+            document_id: documentId
+        });
+        console.log('Summary generated:', response.data);
+        return response.data;
+    } catch (error) {
+        console.error('Failed to generate summary:', error);
+        throw error;
+    }
+};
+
 export default api;
