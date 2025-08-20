@@ -71,8 +71,8 @@ if __name__ == '__main__':
     backend_port = int(os.getenv('FASTAPI_BACKEND_PORT', '8000'))
     frontend_port = int(os.getenv('PORT', '8080'))
 
-    print(f'🌐 Starting backend on http://0.0.0.0:{backend_port} (mounted at /api)')
-    print(f'Serving frontend static files on http://0.0.0.0:{frontend_port}')
+    print(f'🌐 Starting backend on http://localhost:{backend_port} (mounted at /api)')
+    print(f'Serving frontend static files on http://localhost:{frontend_port}')
 
     # Start backend using uvicorn in a subprocess (serve the backend_app mounted at /api)
     backend_cmd = [

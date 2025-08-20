@@ -13,7 +13,7 @@ A web-based PDF document intelligence system designed for the Adobe India Hackat
 
 ## Architecture
 
-- **Frontend**: Streamlit-based web interface with 3-column layout
+- **Frontend**: React-based web interface with 3-column layout
 - **Backend**: FastAPI with session management and document processing
 - **Processing**: Background PDF analysis with semantic search capabilities
 - **Deployment**: Single Docker container with both frontend and backend
@@ -22,7 +22,7 @@ A web-based PDF document intelligence system designed for the Adobe India Hackat
 
 ### Prerequisites
 
-- Python 3.11+
+- Python 3.11
 - Docker (optional, for containerized deployment)
 
 ### Local Development
@@ -91,9 +91,6 @@ adobeRound3/
 │   ├── llm_service.py          # LLM integration (Gemini/others)
 │   ├── audio_service.py        # TTS / podcast generation helpers
 │   └── search_engine.py        # Search ranking and strategy
-├── frontend/                   # (Optional) Python-based frontend entrypoints
-│   ├── __init__.py
-│   └── main.py
 ├── frontend-react/             # React single-page app (production build lives in /frontend/build)
 │   ├── package.json
 │   └── src/                    # React source
@@ -152,23 +149,6 @@ pytest
 - Frontend uses Streamlit's component-based architecture
 - Session-based architecture with no persistent storage
 - Progressive processing for optimal user experience
-
-## Requirements Compliance
-
-This implementation addresses the following requirements:
-- **1.2**: Session-based workspace creation
-- **7.1**: Python-based frontend technology (Streamlit)
-- **7.6**: Health check endpoints for monitoring
-
-## Next Steps
-
-This is the foundation setup. Subsequent tasks will implement:
-1. Document upload and processing
-2. 3-column layout interface
-3. PDF viewing capabilities
-4. Semantic search and insights
-5. Audio generation
-6. Performance optimization
 
 ## License
 
