@@ -79,23 +79,34 @@ A web-based PDF document intelligence system designed for the Adobe India Hackat
    - Application: http://localhost:8080
    - Backend API: http://localhost:8000
 
-## Project Structure
+## Project structure
 
 ```
-pdf-analysis-workbench/
-├── backend/                 # FastAPI backend
+adobeRound3/
+├── backend/                    # FastAPI backend and processing modules
 │   ├── __init__.py
-│   └── main.py             # Main FastAPI application
-├── frontend/               # Streamlit frontend
+│   ├── main.py                 # FastAPI app, endpoints and session management
+│   ├── document_processor.py   # PDF processing pipeline
+│   ├── embedding_service.py    # Embeddings and semantic search glue
+│   ├── llm_service.py          # LLM integration (Gemini/others)
+│   ├── audio_service.py        # TTS / podcast generation helpers
+│   └── search_engine.py        # Search ranking and strategy
+├── frontend/                   # (Optional) Python-based frontend entrypoints
 │   ├── __init__.py
-│   └── main.py             # Main Streamlit application
-├── .env.example            # Environment configuration template
-├── requirements.txt        # Python dependencies
-├── Dockerfile             # Docker container configuration
-├── docker-compose.yml     # Docker Compose configuration
-├── start.sh              # Linux/Mac startup script
-├── start.bat             # Windows startup script
-└── README.md             # This file
+│   └── main.py
+├── frontend-react/             # React single-page app (production build lives in /frontend/build)
+│   ├── package.json
+│   └── src/                    # React source
+├── sample_pdfs/                # Example PDFs used for demos and tests
+├── entrypoint.sh               # Docker entrypoint (creates .env and starts services)
+├── docker-start.sh             # In-container script that starts backend + frontend static server
+├── Dockerfile                  # Multi-stage Dockerfile (build frontend, package backend)
+├── docker-compose.yml          # Optional compose setup for local deployment
+├── requirements.txt            # Python dependencies
+├── start_backend.ps1/.bat      # Windows convenience scripts to run backend locally
+├── start_frontend.ps1/.bat     # Windows convenience scripts to run frontend locally
+├── test_*.py                   # Unit/integration tests and demos
+└── README.md                   # Project documentation (this file)
 ```
 
 ## API Endpoints

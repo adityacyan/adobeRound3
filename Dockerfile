@@ -36,13 +36,15 @@ COPY --from=frontend-builder /app/frontend/build ./frontend/build
 # Create directories for uploads and temp files
 RUN mkdir -p /app/uploads /app/temp
 
-# Copy scripts
-COPY entrypoint.sh /app/entrypoint.sh
-COPY docker-start.sh /app/start.sh
-RUN chmod +x /app/entrypoint.sh /app/start.sh
+# Copy scripts and ensure proper line endings
+COPY entrypoint.sh docker-start.sh /app/
+RUN mv /app/docker-start.sh /app/start.sh && \
+    sed -i 's/\r$//' /app/entrypoint.sh /app/start.sh && \
+    chmod +x /app/entrypoint.sh /app/start.sh
 
 # Expose port
 EXPOSE 8080
+EXPOSE 8000
 
 # Set entrypoint and command
 ENTRYPOINT ["/app/entrypoint.sh"]
