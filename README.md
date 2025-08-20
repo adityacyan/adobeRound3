@@ -68,6 +68,21 @@ A web-based PDF document intelligence system designed for the Adobe India Hackat
    - Backend API: http://localhost:8000
    - API Documentation: http://localhost:8000/docs
 
+### Frontend Issues
+
+**Port 8080 already in use:**
+
+```cmd
+# Use different port
+streamlit run frontend/main.py --server.port 8081
+```
+
+**Backend connection failed:**
+
+- Ensure backend is running on port 8000
+- Check firewall settings
+- Verify backend health endpoint
+
 ### Docker Deployment
 
 1. **Build and Run**
