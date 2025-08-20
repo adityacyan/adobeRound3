@@ -143,9 +143,15 @@ ACCURACY_MINIMUM=0.85
 SESSION_TIMEOUT_HOURS=4
 
 # Service Integration
-GEMINI_API_KEY=your_gemini_api_key_here
-AZURE_SPEECH_KEY=your_azure_speech_key_here
-ADOBE_PDF_EMBED_KEY=your_adobe_api_key_here
+GEMINI_API_KEY=https://aistudio.google.com/apikey (get your API key)
+ADOBE_PDF_EMBED_KEY=f3af072fa66b4a81bd773f77c7ec0070
+AZURE_TTS_KEY= your azure key
+AZURE_TTS_ENDPOINT= https://yourendpoint.com
+AZURE_TTS_VOICE= alloy
+AZURE_TTS_DEPLOYMENT= deployment-name
+AZURE_TTS_API_VERSION= 2025-03-01-preview
+AZURE_TTS_HOST_VOICE=nova
+AZURE_TTS_GUEST_VOICE=onyx
 
 # Application Ports
 STREAMLIT_SERVER_PORT=8080
