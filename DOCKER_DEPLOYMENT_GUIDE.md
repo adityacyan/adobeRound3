@@ -58,6 +58,7 @@ docker run -d \
 ```powershell
 docker run -d `
   --name pdf-workbench `
+
   --env ADOBE_EMBED_API_KEY="f3af072fa66b4a81bd773f77c7ec0070" `
   --env LLM_PROVIDER="gemini" `
   --env GEMINI_API_KEY=<GEMINI_API_KEY> `
@@ -68,7 +69,7 @@ docker run -d `
 --env AZURE_TTS_DEPLOYMENT=<TTS_DEPLOYMENT_NAME> `
 -p 8080:8080 `
 -p 8000:8000 `
-  pdf-workbench:latest
+pdf-workbench:latest
 ```
 
 
@@ -88,6 +89,32 @@ You need to provide these API keys when running the container. You have **two op
 **Choose one authentication method for Gemini:**
 - **Option A**: Use `GEMINI_API_KEY` directly (simpler, no file mounting needed)
 - **Option B**: Use `GOOGLE_APPLICATION_CREDENTIALS` with service account file (more secure for production)
+
+## 🖥️ **Platform-Specific Syntax:**
+
+### **Linux/Mac (Bash):**
+```bash
+docker run -d \
+  -e GEMINI_API_KEY="your-key" \
+  -e AZURE_TTS_KEY="your-key" \
+  pdf-workbench:latest
+```
+
+### **Windows PowerShell:**
+```powershell
+docker run -d `
+  --env GEMINI_API_KEY="your-key" `
+  --env AZURE_TTS_KEY="your-key" `
+  pdf-workbench:latest
+```
+
+### **Windows Command Prompt (cmd):**
+```cmd
+docker run -d ^
+  --env GEMINI_API_KEY="your-key" ^
+  --env AZURE_TTS_KEY="your-key" ^
+  pdf-workbench:latest
+```
 
 ## 🌐 Access Points
 
