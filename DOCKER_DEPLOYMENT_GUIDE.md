@@ -2,7 +2,9 @@
 
 ## Quick Start
 
-### Option 1: Your Sample Command Format
+ADOBE_EMBED_API_KEY = "f3af072fa66b4a81bd773f77c7ec0070"
+
+### Your Sample Command Format
 
 Based on your provided sample, here are the command formats you can use:
 
@@ -12,6 +14,8 @@ Based on your provided sample, here are the command formats you can use:
 docker build -t pdf-workbench:latest .
 
 # Run with credentials mounting
+# please use version "2025-03-01-preview"
+# azure foundary model name "tts"
 docker run -d \
   --name pdf-workbench \
   -v /path/to/credentials:/credentials \
@@ -22,13 +26,18 @@ docker run -d \
   -e TTS_PROVIDER=azure \
   -e AZURE_TTS_KEY=<TTS_KEY> \
   -e AZURE_TTS_ENDPOINT=<TTS_ENDPOINT> \
+  -e  AZURE_TTS_DEPLOYMENT=<TTS_DEPLOYMENT_NAME> \
   -p 8080:8080 \
+  -p 8000:8000 \
   pdf-workbench:latest
 ```
 
 **Option B: Using Direct Gemini API Key (Simpler)**
 ```bash
 # Run with direct API keys (no credentials file needed)
+# get the API on Google AI studio (https://aistudio.google.com/apikey)
+# please use version "2025-03-01-preview"
+# azure foundary model name "tts"
 docker run -d \
   --name pdf-workbench \
   -e ADOBE_EMBED_API_KEY=<ADOBE_EMBED_API_KEY> \
@@ -38,76 +47,31 @@ docker run -d \
   -e TTS_PROVIDER=azure \
   -e AZURE_TTS_KEY=<TTS_KEY> \
   -e AZURE_TTS_ENDPOINT=<TTS_ENDPOINT> \
+  -e  AZURE_TTS_DEPLOYMENT=<TTS_DEPLOYMENT_NAME> \
   -p 8080:8080 \
+  -p 8000:8000 \
   pdf-workbench:latest
 ```
 
 **Windows PowerShell Example:**
+- use "" (double quotes) for each credential like in adobe embed key already given 
 ```powershell
 docker run -d `
   --name pdf-workbench `
-  --env ADOBE_EMBED_API_KEY="your-adobe-key" `
+
+  --env ADOBE_EMBED_API_KEY="f3af072fa66b4a81bd773f77c7ec0070" `
   --env LLM_PROVIDER="gemini" `
-  --env GEMINI_API_KEY="AIzaSyDdHcwg4yRWzY73r3k-Ujsq5EWXvfioNrk" `
+  --env GEMINI_API_KEY=<GEMINI_API_KEY> `
   --env GEMINI_MODEL="gemini-2.5-flash" `
   --env TTS_PROVIDER="azure" `
-  --env AZURE_TTS_KEY="your-azure-key" `
-  --env AZURE_TTS_ENDPOINT="https://your-region.tts.speech.microsoft.com/" `
-  -p 8080:8080 `
-  pdf-workbench:latest
+  --env AZURE_TTS_KEY=<TTS_KEY> `
+  --env AZURE_TTS_ENDPOINT=<TTS_ENDPOINT> `
+--env AZURE_TTS_DEPLOYMENT=<TTS_DEPLOYMENT_NAME> `
+-p 8080:8080 `
+-p 8000:8000 `
+pdf-workbench:latest
 ```
 
-### Option 2: Using the Build Script (Interactive)
-
-**Windows:**
-```bash
-.\docker-run.bat run
-```
-
-**Linux/Mac:**
-```bash
-chmod +x docker-run.sh
-./docker-run.sh run
-```
-
-### Option 3: Using Docker Compose
-
-```bash
-# Set your API keys and run
-GEMINI_API_KEY=your-key \
-AZURE_TTS_KEY=your-key \
-AZURE_TTS_ENDPOINT=https://your-region.tts.speech.microsoft.com/ \
-ADOBE_EMBED_API_KEY=your-key \
-docker-compose up
-```
-
-### Option 4: Alternative Manual Commands
-
-```bash
-# Build the image
-docker build -t pdf-workbench:latest .
-
-# Option A: With direct Gemini API key (recommended for development)
-docker run -d \
-  --name pdf-workbench \
-  -p 8080:8080 \
-  -e GEMINI_API_KEY="your-gemini-api-key" \
-  -e AZURE_TTS_KEY="your-azure-tts-key" \
-  -e AZURE_TTS_ENDPOINT="https://your-region.tts.speech.microsoft.com/" \
-  -e ADOBE_EMBED_API_KEY="your-adobe-embed-key" \
-  pdf-workbench:latest
-
-# Option B: With Google Cloud credentials file
-docker run -d \
-  --name pdf-workbench \
-  -v /path/to/credentials:/credentials \
-  -p 8080:8080 \
-  -e GOOGLE_APPLICATION_CREDENTIALS="/credentials/adbe-gcp.json" \
-  -e AZURE_TTS_KEY="your-azure-tts-key" \
-  -e AZURE_TTS_ENDPOINT="https://your-region.tts.speech.microsoft.com/" \
-  -e ADOBE_EMBED_API_KEY="your-adobe-embed-key" \
-  pdf-workbench:latest
-```
 
 ## 🔑 Required API Keys
 
@@ -120,6 +84,7 @@ You need to provide these API keys when running the container. You have **two op
 | **Azure TTS** | `AZURE_TTS_KEY` | For podcast generation | ✅ Yes |
 | **Azure TTS** | `AZURE_TTS_ENDPOINT` | Azure TTS service endpoint | ✅ Yes |
 | **Adobe PDF Embed** | `ADOBE_EMBED_API_KEY` | For enhanced PDF viewing | ✅ Yes |
+| **Azure TTS Deployment** | `AZURE_TTS_DELPOYMENT` | Azure TTS service deployment | ✅ Yes |
 
 **Choose one authentication method for Gemini:**
 - **Option A**: Use `GEMINI_API_KEY` directly (simpler, no file mounting needed)
@@ -153,6 +118,7 @@ docker run -d ^
 
 ## 🌐 Access Points
 
+If opens on http://0.0.0.0:8080 then manually change to localhost:8080
 Once running, the application will be available at:
 
 - **Frontend**: http://localhost:8080
@@ -277,4 +243,4 @@ services:
 ### Performance Issues
 - Increase memory limits
 - Check system resources: `docker stats pdf-workbench`
-- Consider using Redis for caching: `docker-compose --profile with-redis up`
+

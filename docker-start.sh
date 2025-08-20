@@ -2,8 +2,8 @@
 
 echo "🚀 Starting PDF Analysis Workbench..."
 
-# Start the integrated application
-python -c "
+# Start the integrated application using a heredoc to avoid shell quoting issues
+python - <<'PY'
 import os
 import sys
 import uvicorn
@@ -67,10 +67,43 @@ async def health_check():
     }
 
 if __name__ == '__main__':
-    port = int(os.getenv('FASTAPI_BACKEND_PORT', '8080'))
-    print(f'🌐 Server starting on http://0.0.0.0:{port}')
-    print(f'📱 Frontend: http://0.0.0.0:{port}/')
-    print(f'🔗 API: http://0.0.0.0:{port}/api/')
-    print(f'📚 Docs: http://0.0.0.0:{port}/api/docs')
-    uvicorn.run(app, host='0.0.0.0', port=port)
-"
+    import subprocess
+    backend_port = int(os.getenv('FASTAPI_BACKEND_PORT', '8000'))
+    frontend_port = int(os.getenv('PORT', '8080'))
+
+    print(f'🌐 Starting backend on http://localhost:{backend_port} (mounted at /api)')
+    print(f'Serving frontend static files on http://localhost:{frontend_port}')
+
+    # Start backend using uvicorn in a subprocess (serve the backend_app mounted at /api)
+    backend_cmd = [
+        'python', '-c',
+        'import uvicorn; from backend.main import app as backend_app; uvicorn.run(backend_app, host="0.0.0.0", port=%d)' % backend_port
+    ]
+
+    # Start a simple static file server for the built React app on frontend_port
+    static_dir = '/app/frontend/build'
+    frontend_cmd = [
+        'python', '-m', 'http.server', str(frontend_port), '--directory', static_dir
+    ]
+
+    # Launch both processes and wait
+    procs = []
+    try:
+        procs.append(subprocess.Popen(backend_cmd))
+        # Give backend a moment to start
+        import time; time.sleep(0.5)
+        # Start frontend static server (only if build exists)
+        import os
+        if os.path.exists(static_dir):
+            procs.append(subprocess.Popen(frontend_cmd))
+
+        # Wait for processes
+        for p in procs:
+            p.wait()
+
+    except KeyboardInterrupt:
+        for p in procs:
+            p.terminate()
+        raise
+PY
+

@@ -31,7 +31,7 @@ npm install
 npm start
 ```
 
-The app will open at `http://localhost:3000`
+The app will open at `http://localhost:8080`
 
 ### Production Build
 
@@ -57,18 +57,9 @@ src/
 └── hooks/                             # Custom React hooks (future)
 ```
 
-## Key Improvements over Streamlit
-
-✅ **Real-time updates** - No page refresh needed for text selection
-✅ **Better PDF integration** - Smooth iframe handling
-✅ **Professional UI** - Modern React components with Tailwind CSS
-✅ **Responsive design** - Works on desktop, tablet, mobile
-✅ **Better state management** - Efficient caching and updates
-✅ **WebSocket support** - Real-time processing updates (ready)
-
 ## API Integration
 
-The React app connects to your existing FastAPI backend:
+The React app connects to FastAPI backend:
 
 - `POST /session/create` - Create new session
 - `POST /upload/bulk` - Upload PDFs
@@ -81,7 +72,8 @@ The React app connects to your existing FastAPI backend:
 1. **Upload PDFs** - Drag & drop multiple PDFs
 2. **View insights** - AI-generated takeaways appear automatically
 3. **Select text** - Highlight text in PDF to find related content
-4. **Generate summaries** - Use action panel for summaries and podcasts
+4. **Generate summaries** - Use action panel for summaries
+5. **Generate podcasts** - use action panel for podcast generation
 
 ## Technologies
 
