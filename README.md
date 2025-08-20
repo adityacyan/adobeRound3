@@ -166,4 +166,4 @@ pytest
 
 ## License
 
-Built for Adobe India Hackathon 2025
+Built for Adobe India Hackathon 2025 by adityacyan , martini , pratyayforDS at NITP till last miniute.
