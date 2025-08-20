@@ -83,16 +83,9 @@ streamlit run frontend/main.py --server.port 8081
 - Check firewall settings
 - Verify backend health endpoint
 
-### Docker Deployment
+### 🐳 Docker Deployment Guide
+[Guide docker](DOCKER_DEPLOYMENT_GUIDE.md)
 
-1. **Build and Run**
-   ```bash
-   docker-compose up --build
-   ```
-
-2. **Access Application**
-   - Application: http://localhost:8080
-   - Backend API: http://localhost:8000
 
 ## Project structure
 
