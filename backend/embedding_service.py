@@ -1,5 +1,6 @@
 """
-Embedding service using Gemini Embedding API (gemini-embedding-001) + FAISS.
+Embedding service using local sentence-transformers (all-MiniLM-L6-v2) + FAISS.
+Model is baked into the Docker image at build time - no runtime download.
 """
 
 import asyncio
@@ -11,28 +12,24 @@ from typing import Dict, List, Optional
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
-from google import genai
-from google.genai import types as genai_types
+from sentence_transformers import SentenceTransformer
 import faiss
 from pydantic import BaseModel
-from dotenv import load_dotenv
-
-load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
-EMBEDDING_DIMENSION = 768
-BATCH_SIZE = 50  # gemini-embedding-001 supports lists of strings
+LOCAL_MODEL_NAME = "all-MiniLM-L6-v2"
+MODEL_CACHE_DIR = "/app/models"
+EMBEDDING_DIMENSION = 384
 
 
 class EmbeddingConfig(BaseModel):
-    model_name: str = GEMINI_EMBEDDING_MODEL
+    model_name: str = LOCAL_MODEL_NAME
     embedding_dimension: int = EMBEDDING_DIMENSION
     faiss_index_type: str = "IndexFlatIP"
-    batch_size: int = BATCH_SIZE
-    max_text_length: int = 2048
+    batch_size: int = 64
+    max_text_length: int = 512
 
 
 class DocumentEmbedding(BaseModel):
@@ -57,16 +54,16 @@ class SearchResult(BaseModel):
 
 
 class EmbeddingService:
-    """Embedding service backed by Gemini gemini-embedding-001 + FAISS."""
+    """Local sentence-transformer embedding service with FAISS index."""
 
     def __init__(self, config: EmbeddingConfig = None):
         self.config = config or EmbeddingConfig()
+        self.model: Optional[SentenceTransformer] = None
         self.faiss_index: Optional[faiss.Index] = None
         self.embeddings_metadata: Dict[int, DocumentEmbedding] = {}
         self.document_embeddings: Dict[str, List[int]] = {}
-        self.executor = ThreadPoolExecutor(max_workers=4)
+        self.executor = ThreadPoolExecutor(max_workers=2)
         self.is_initialized = False
-        self.client: Optional[genai.Client] = None
 
         self.stats = {
             "total_embeddings": 0,
@@ -79,59 +76,37 @@ class EmbeddingService:
         if self.is_initialized:
             return
 
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise ValueError("GEMINI_API_KEY is required for embedding service")
+        logger.info(f"Loading local embedding model: {self.config.model_name}")
+        start_time = time.time()
 
-        self.client = genai.Client(api_key=api_key)
+        self.model = await asyncio.get_event_loop().run_in_executor(
+            self.executor, self._load_model
+        )
         self.faiss_index = faiss.IndexFlatIP(self.config.embedding_dimension)
         self.is_initialized = True
-        logger.info(f"Embedding service initialized with {self.config.model_name}")
 
-    def _load_model(self):
-        pass  # kept for interface compatibility
+        elapsed = (time.time() - start_time) * 1000
+        logger.info(f"Embedding model loaded in {elapsed:.1f}ms")
 
-    def _normalize(self, vectors: np.ndarray) -> np.ndarray:
-        """L2-normalize vectors for cosine similarity via inner product."""
-        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
-        norms = np.where(norms == 0, 1, norms)
-        return vectors / norms
+    def _load_model(self) -> SentenceTransformer:
+        # Use baked-in cache dir first, fall back to default HF cache
+        cache_dir = MODEL_CACHE_DIR if os.path.isdir(MODEL_CACHE_DIR) else None
+        return SentenceTransformer(self.config.model_name, cache_folder=cache_dir)
 
-    def _embed_documents_sync(self, texts: List[str]) -> np.ndarray:
-        """Embed a batch of document texts using RETRIEVAL_DOCUMENT task type."""
-        result = self.client.models.embed_content(
-            model=self.config.model_name,
-            contents=texts,
-            config=genai_types.EmbedContentConfig(
-                task_type="RETRIEVAL_DOCUMENT",
-                output_dimensionality=self.config.embedding_dimension,
-            ),
+    def _encode_texts(self, texts: List[str]) -> np.ndarray:
+        embeddings = self.model.encode(
+            texts,
+            batch_size=self.config.batch_size,
+            show_progress_bar=False,
+            convert_to_numpy=True,
+            normalize_embeddings=True,
         )
-        vectors = np.array([e.values for e in result.embeddings], dtype=np.float32)
-        return self._normalize(vectors)
-
-    def _embed_query_sync(self, text: str) -> np.ndarray:
-        """Embed a single search query using RETRIEVAL_QUERY task type."""
-        result = self.client.models.embed_content(
-            model=self.config.model_name,
-            contents=[text],
-            config=genai_types.EmbedContentConfig(
-                task_type="RETRIEVAL_QUERY",
-                output_dimensionality=self.config.embedding_dimension,
-            ),
-        )
-        vector = np.array([result.embeddings[0].values], dtype=np.float32)
-        return self._normalize(vector)
+        return embeddings
 
     async def _generate_embeddings_batch(self, texts: List[str]) -> np.ndarray:
-        all_embeddings = []
-        for i in range(0, len(texts), self.config.batch_size):
-            batch = texts[i: i + self.config.batch_size]
-            embeddings = await asyncio.get_event_loop().run_in_executor(
-                self.executor, self._embed_documents_sync, batch
-            )
-            all_embeddings.append(embeddings)
-        return np.vstack(all_embeddings)
+        return await asyncio.get_event_loop().run_in_executor(
+            self.executor, self._encode_texts, texts
+        )
 
     async def generate_document_embeddings(
         self, document_id: str, sections: List[dict]
@@ -188,9 +163,6 @@ class EmbeddingService:
         )
         return document_embeddings
 
-    def _encode_texts(self, texts: List[str]) -> np.ndarray:
-        return self._embed_documents_sync(texts)
-
     async def semantic_search(
         self,
         query: str,
@@ -203,12 +175,10 @@ class EmbeddingService:
         if self.faiss_index.ntotal == 0:
             return []
 
-        logger.info(f"Semantic search: '{query[:50]}' top_k={top_k}")
         start_time = time.time()
 
-        query_vector = await asyncio.get_event_loop().run_in_executor(
-            self.executor, self._embed_query_sync, query
-        )
+        query_embedding = await self._generate_embeddings_batch([query])
+        query_vector = query_embedding[0].reshape(1, -1)
 
         similarities, indices = self.faiss_index.search(
             query_vector, min(top_k * 2, self.faiss_index.ntotal)
