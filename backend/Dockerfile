@@ -14,7 +14,7 @@ WORKDIR /app
 COPY requirements.txt .
 
 # Install PyTorch CPU-only first (avoids CUDA downloads)
-RUN --mount=type=cache,target=/root/.cache/pip \
+RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
     pip install torch --extra-index-url https://download.pytorch.org/whl/cpu && \
     pip install --no-cache-dir -r requirements.txt
 

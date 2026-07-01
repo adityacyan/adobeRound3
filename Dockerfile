@@ -5,7 +5,7 @@ FROM node:22.14.0-alpine AS frontend-builder
 
 WORKDIR /app/frontend
 COPY frontend-react/package*.json ./
-RUN --mount=type=cache,target=/root/.npm \
+RUN --mount=type=cache,id=npm-cache,target=/root/.npm \
     npm ci --only=production
 
 COPY frontend-react/ ./
@@ -27,7 +27,7 @@ WORKDIR /app
 # Copy and install Python dependencies (cached as long as requirements.txt is unchanged)
 COPY requirements.txt .
 # Install PyTorch CPU-only first (avoids downloading 2GB+ CUDA deps)
-RUN --mount=type=cache,target=/root/.cache/pip \
+RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
     pip install torch --extra-index-url https://download.pytorch.org/whl/cpu --no-cache-dir && \
     pip install --no-cache-dir -r requirements.txt
 
