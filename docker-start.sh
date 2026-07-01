@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "🚀 Starting PDF Analysis Workbench..."
+echo "Starting PDF Analysis Workbench..."
 
 python - <<'PY'
 import os
@@ -16,7 +16,6 @@ sys.path.insert(0, '/app')
 
 from backend.main import app as backend_app
 
-# Create single app serving both frontend and backend
 app = FastAPI(title='PDF Analysis Workbench')
 
 app.add_middleware(
@@ -50,6 +49,6 @@ async def health():
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', '8080'))
-    print(f'Serving everything on http://0.0.0.0:{port}')
+    print(f'Serving on http://0.0.0.0:{port}')
     uvicorn.run(app, host='0.0.0.0', port=port)
 PY

@@ -5,8 +5,7 @@ FROM node:22.14.0-alpine AS frontend-builder
 
 WORKDIR /app/frontend
 COPY frontend-react/package*.json ./
-RUN --mount=type=cache,id=npm-cache,target=/root/.npm \
-    npm ci --only=production
+RUN npm ci
 
 COPY frontend-react/ ./
 RUN npm run build
@@ -27,8 +26,7 @@ WORKDIR /app
 # Copy and install Python dependencies (cached as long as requirements.txt is unchanged)
 COPY requirements.txt .
 # Install PyTorch CPU-only first (avoids downloading 2GB+ CUDA deps)
-RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
-    pip install torch --extra-index-url https://download.pytorch.org/whl/cpu --no-cache-dir && \
+RUN pip install torch --extra-index-url https://download.pytorch.org/whl/cpu --no-cache-dir && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy backend source (changes most often, placed last)
@@ -47,13 +45,13 @@ RUN mv /app/docker-start.sh /app/start.sh && \
     chmod +x /app/entrypoint.sh /app/start.sh
 
 EXPOSE 8080
-EXPOSE 8000
 
 ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["/app/start.sh"]
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:${PORT:-8080}/health || exit 1
 
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
+ENV PORT=8080
