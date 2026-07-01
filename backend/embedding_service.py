@@ -1,35 +1,39 @@
 """
-Embedding service using fastembed (ONNX Runtime, no PyTorch) + FAISS.
-Model is baked into the Docker image at build time - no runtime download.
-~100MB RAM vs ~700MB for sentence-transformers+torch.
+Embedding service using Gemini gemini-embedding-001 + in-memory index.
+All chunks per document are sent in a single API call (one request per upload).
+Free tier: 1000 requests/day, 100 req/min - one upload = one embedding request.
 """
 
 import asyncio
 import time
 import logging
+import os
 import numpy as np
 from typing import Dict, List, Optional
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
-from fastembed import TextEmbedding
-import faiss
+from google import genai
+from google.genai import types as genai_types
 from pydantic import BaseModel
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-FASTEMBED_MODEL = "BAAI/bge-small-en-v1.5"  # 33MB, 384-dim, fast ONNX
-MODEL_CACHE_DIR = "/app/models"
-EMBEDDING_DIMENSION = 384
+GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
+EMBEDDING_DIMENSION = 768
+# Max strings per batch - gemini-embedding-001 supports lists directly
+MAX_BATCH_SIZE = 100
 
 
 class EmbeddingConfig(BaseModel):
-    model_name: str = FASTEMBED_MODEL
+    model_name: str = GEMINI_EMBEDDING_MODEL
     embedding_dimension: int = EMBEDDING_DIMENSION
-    faiss_index_type: str = "IndexFlatIP"
-    batch_size: int = 64
-    max_text_length: int = 512
+    batch_size: int = MAX_BATCH_SIZE
+    max_text_length: int = 2048
 
 
 class DocumentEmbedding(BaseModel):
@@ -54,14 +58,19 @@ class SearchResult(BaseModel):
 
 
 class EmbeddingService:
-    """ONNX-based local embedding service using fastembed + FAISS."""
+    """
+    Gemini embedding service with in-memory cosine similarity search.
+    No FAISS needed - numpy dot product on normalized vectors is fast enough
+    for hundreds of chunks and uses negligible RAM.
+    """
 
     def __init__(self, config: EmbeddingConfig = None):
         self.config = config or EmbeddingConfig()
-        self.model: Optional[TextEmbedding] = None
-        self.faiss_index: Optional[faiss.Index] = None
-        self.embeddings_metadata: Dict[int, DocumentEmbedding] = {}
-        self.document_embeddings: Dict[str, List[int]] = {}
+        self.client: Optional[genai.Client] = None
+        # Store embeddings as numpy matrix for fast dot product search
+        self.vectors: Optional[np.ndarray] = None
+        self.metadata: List[DocumentEmbedding] = []
+        self.document_index: Dict[str, List[int]] = {}
         self.executor = ThreadPoolExecutor(max_workers=2)
         self.is_initialized = False
 
@@ -70,40 +79,57 @@ class EmbeddingService:
             "average_embedding_time_ms": 0,
             "total_searches": 0,
             "average_search_time_ms": 0,
+            "api_calls": 0,
         }
 
     async def initialize(self):
         if self.is_initialized:
             return
-
-        logger.info(f"Loading fastembed model: {self.config.model_name}")
-        start_time = time.time()
-
-        self.model = await asyncio.get_event_loop().run_in_executor(
-            self.executor, self._load_model
-        )
-        self.faiss_index = faiss.IndexFlatIP(self.config.embedding_dimension)
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY is required")
+        self.client = genai.Client(api_key=api_key)
         self.is_initialized = True
+        logger.info(f"Embedding service initialized with {self.config.model_name}")
 
-        elapsed = (time.time() - start_time) * 1000
-        logger.info(f"Embedding model loaded in {elapsed:.1f}ms")
+    def _load_model(self):
+        pass  # kept for interface compatibility
 
-    def _load_model(self) -> TextEmbedding:
-        return TextEmbedding(model_name=self.config.model_name)
-
-    def _encode_texts(self, texts: List[str]) -> np.ndarray:
-        # fastembed returns a generator, collect into array
-        embeddings = list(self.model.embed(texts, batch_size=self.config.batch_size))
-        vectors = np.array(embeddings, dtype=np.float32)
-        # normalize for cosine similarity
+    def _normalize(self, vectors: np.ndarray) -> np.ndarray:
         norms = np.linalg.norm(vectors, axis=1, keepdims=True)
         norms = np.where(norms == 0, 1, norms)
         return vectors / norms
 
-    async def _generate_embeddings_batch(self, texts: List[str]) -> np.ndarray:
-        return await asyncio.get_event_loop().run_in_executor(
-            self.executor, self._encode_texts, texts
+    def _call_embed_documents(self, texts: List[str]) -> np.ndarray:
+        """
+        Single API call for all texts using RETRIEVAL_DOCUMENT task.
+        gemini-embedding-001 returns one embedding per string in the list.
+        """
+        result = self.client.models.embed_content(
+            model=self.config.model_name,
+            contents=texts,
+            config=genai_types.EmbedContentConfig(
+                task_type="RETRIEVAL_DOCUMENT",
+                output_dimensionality=self.config.embedding_dimension,
+            ),
         )
+        vectors = np.array([e.values for e in result.embeddings], dtype=np.float32)
+        self.stats["api_calls"] += 1
+        return self._normalize(vectors)
+
+    def _call_embed_query(self, text: str) -> np.ndarray:
+        """Single API call for a query string."""
+        result = self.client.models.embed_content(
+            model=self.config.model_name,
+            contents=[text],
+            config=genai_types.EmbedContentConfig(
+                task_type="RETRIEVAL_QUERY",
+                output_dimensionality=self.config.embedding_dimension,
+            ),
+        )
+        vector = np.array([result.embeddings[0].values], dtype=np.float32)
+        self.stats["api_calls"] += 1
+        return self._normalize(vector)
 
     async def generate_document_embeddings(
         self, document_id: str, sections: List[dict]
@@ -111,57 +137,59 @@ class EmbeddingService:
         if not self.is_initialized:
             await self.initialize()
 
-        logger.info(
-            f"Generating embeddings for {document_id} with {len(sections)} sections"
-        )
+        logger.info(f"Embedding {len(sections)} sections for {document_id} in one API call")
         start_time = time.time()
 
-        texts = []
-        section_metadata = []
-        for section in sections:
-            text = section.get("content", "")[: self.config.max_text_length]
-            texts.append(text)
-            section_metadata.append({
-                "section_id": section.get("section_id"),
-                "page_number": section.get("page_number", 1),
-                "section_type": section.get("section_type", "paragraph"),
-                "confidence": section.get("confidence", 1.0),
-            })
+        texts = [s.get("content", "")[: self.config.max_text_length] for s in sections]
+        section_meta = [
+            {
+                "section_id": s.get("section_id"),
+                "page_number": s.get("page_number", 1),
+                "section_type": s.get("section_type", "paragraph"),
+                "confidence": s.get("confidence", 1.0),
+            }
+            for s in sections
+        ]
 
-        embeddings = await self._generate_embeddings_batch(texts)
+        # All chunks in one API call — counts as 1 request against rate limit
+        all_vectors = []
+        for i in range(0, len(texts), self.config.batch_size):
+            batch = texts[i: i + self.config.batch_size]
+            vecs = await asyncio.get_event_loop().run_in_executor(
+                self.executor, self._call_embed_documents, batch
+            )
+            all_vectors.append(vecs)
+
+        embeddings_matrix = np.vstack(all_vectors)
 
         document_embeddings = []
-        embedding_indices = []
+        start_idx = len(self.metadata)
+        indices = []
 
-        for i, (embedding, metadata) in enumerate(zip(embeddings, section_metadata)):
-            doc_embedding = DocumentEmbedding(
-                section_id=metadata["section_id"],
+        for i, (vec, meta) in enumerate(zip(embeddings_matrix, section_meta)):
+            doc_emb = DocumentEmbedding(
+                section_id=meta["section_id"],
                 document_id=document_id,
                 text=texts[i],
-                embedding=embedding.tolist(),
-                page_number=metadata["page_number"],
-                section_type=metadata["section_type"],
+                embedding=vec.tolist(),
+                page_number=meta["page_number"],
+                section_type=meta["section_type"],
                 timestamp=datetime.now(),
-                confidence=metadata["confidence"],
+                confidence=meta["confidence"],
             )
-            document_embeddings.append(doc_embedding)
+            document_embeddings.append(doc_emb)
+            self.metadata.append(doc_emb)
+            indices.append(start_idx + i)
 
-            idx = self.faiss_index.ntotal
-            self.faiss_index.add(embedding.reshape(1, -1))
-            self.embeddings_metadata[idx] = doc_embedding
-            embedding_indices.append(idx)
-
-        self.document_embeddings[document_id] = embedding_indices
+        # Rebuild vectors matrix
+        all_vecs = [np.array(m.embedding) for m in self.metadata]
+        self.vectors = np.array(all_vecs, dtype=np.float32)
+        self.document_index[document_id] = indices
 
         processing_time = (time.time() - start_time) * 1000
         self._update_embedding_stats(len(sections), processing_time)
-        logger.info(
-            f"Generated {len(document_embeddings)} embeddings in {processing_time:.1f}ms"
-        )
+        logger.info(f"Generated {len(document_embeddings)} embeddings in {processing_time:.1f}ms (1 API call)")
         return document_embeddings
-
-    def _encode_texts_sync(self, texts: List[str]) -> np.ndarray:
-        return self._encode_texts(texts)
 
     async def semantic_search(
         self,
@@ -172,38 +200,45 @@ class EmbeddingService:
         if not self.is_initialized:
             await self.initialize()
 
-        if self.faiss_index.ntotal == 0:
+        if self.vectors is None or len(self.metadata) == 0:
             return []
 
         start_time = time.time()
 
-        query_embedding = await self._generate_embeddings_batch([query])
-        query_vector = query_embedding[0].reshape(1, -1)
-
-        similarities, indices = self.faiss_index.search(
-            query_vector, min(top_k * 2, self.faiss_index.ntotal)
+        query_vec = await asyncio.get_event_loop().run_in_executor(
+            self.executor, self._call_embed_query, query
         )
 
+        # Cosine similarity via dot product (vectors are normalized)
+        scores = (self.vectors @ query_vec.T).flatten()
+
+        # Filter by document_ids if specified
+        if document_ids:
+            allowed = set()
+            for doc_id in document_ids:
+                allowed.update(self.document_index.get(doc_id, []))
+            mask = np.zeros(len(scores), dtype=bool)
+            for idx in allowed:
+                if idx < len(mask):
+                    mask[idx] = True
+            scores = np.where(mask, scores, -1.0)
+
+        top_indices = np.argsort(scores)[::-1][:top_k]
+
         results = []
-        for similarity, idx in zip(similarities[0], indices[0]):
-            if idx == -1:
+        for idx in top_indices:
+            if scores[idx] < 0:
                 continue
-            meta = self.embeddings_metadata.get(idx)
-            if not meta:
-                continue
-            if document_ids and meta.document_id not in document_ids:
-                continue
+            meta = self.metadata[idx]
             results.append(SearchResult(
                 section_id=meta.section_id,
                 document_id=meta.document_id,
                 text=meta.text,
-                similarity_score=float(similarity),
+                similarity_score=float(scores[idx]),
                 page_number=meta.page_number,
                 section_type=meta.section_type,
                 snippet=self._create_snippet(meta.text, query),
             ))
-            if len(results) >= top_k:
-                break
 
         search_time = (time.time() - start_time) * 1000
         self._update_search_stats(search_time)
@@ -228,18 +263,25 @@ class EmbeddingService:
         return snippet
 
     def remove_document_embeddings(self, document_id: str):
-        if document_id not in self.document_embeddings:
+        if document_id not in self.document_index:
             return
-        for idx in self.document_embeddings[document_id]:
-            self.embeddings_metadata.pop(idx, None)
-        del self.document_embeddings[document_id]
+        indices_to_remove = set(self.document_index[document_id])
+        self.metadata = [m for i, m in enumerate(self.metadata) if i not in indices_to_remove]
+        if self.metadata:
+            self.vectors = np.array([m.embedding for m in self.metadata], dtype=np.float32)
+        else:
+            self.vectors = None
+        # Rebuild index
+        self.document_index = {}
+        for i, m in enumerate(self.metadata):
+            self.document_index.setdefault(m.document_id, []).append(i)
         logger.info(f"Removed embeddings for {document_id}")
 
     def get_document_embedding_count(self, document_id: str) -> int:
-        return len(self.document_embeddings.get(document_id, []))
+        return len(self.document_index.get(document_id, []))
 
     def get_total_embedding_count(self) -> int:
-        return self.faiss_index.ntotal if self.faiss_index else 0
+        return len(self.metadata)
 
     def _update_embedding_stats(self, count: int, time_ms: float):
         self.stats["total_embeddings"] += count
@@ -256,7 +298,7 @@ class EmbeddingService:
     def get_stats(self) -> Dict:
         return {
             **self.stats,
-            "total_documents": len(self.document_embeddings),
+            "total_documents": len(self.document_index),
             "total_vectors": self.get_total_embedding_count(),
             "is_initialized": self.is_initialized,
             "model_name": self.config.model_name,
