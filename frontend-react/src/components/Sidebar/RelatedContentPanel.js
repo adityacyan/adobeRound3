@@ -1,6 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Search, FileText, Clock, AlertCircle } from 'lucide-react';
 import { searchRelatedContent } from '../../services/api';
+
+// Retry config: attempts at 3s, 6s, 12s, 24s, 48s (capped at 5 retries)
+const RETRY_DELAYS_MS = [3000, 6000, 12000, 24000, 48000];
 
 const RelatedContentPanel = ({
     sessionId,
@@ -13,49 +16,110 @@ const RelatedContentPanel = ({
     const [searching, setSearching] = useState(false);
     const [error, setError] = useState(null);
     const [lastSearchText, setLastSearchText] = useState('');
+    const [waitingForProcessing, setWaitingForProcessing] = useState(false);
+
+    // Keep refs so retry callbacks always have fresh values without re-triggering effects
+    const retryTimerRef = useRef(null);
+    const retryAttemptRef = useRef(0);
+    const activeSearchTextRef = useRef('');
+
+    const cancelRetry = useCallback(() => {
+        if (retryTimerRef.current) {
+            clearTimeout(retryTimerRef.current);
+            retryTimerRef.current = null;
+        }
+        retryAttemptRef.current = 0;
+        setWaitingForProcessing(false);
+    }, []);
+
+    // Cancel any pending retry when selected text changes or component unmounts
+    useEffect(() => {
+        return () => cancelRetry();
+    }, [cancelRetry]);
 
     useEffect(() => {
         if (selectedText && selectedText !== lastSearchText && selectedText.length > 5) {
+            cancelRetry();
             handleSearch(selectedText);
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedText]);
 
-    const handleSearch = async (text) => {
+    const scheduleRetry = useCallback((text) => {
+        const attempt = retryAttemptRef.current;
+        if (attempt >= RETRY_DELAYS_MS.length) {
+            // Exhausted retries — give up and surface a user-friendly message
+            setWaitingForProcessing(false);
+            setSearching(false);
+            setError('Documents are still processing. Please try again in a moment.');
+            return;
+        }
+
+        const delay = RETRY_DELAYS_MS[attempt];
+        console.log(`Search queued: documents still processing. Retrying in ${delay / 1000}s (attempt ${attempt + 1}/${RETRY_DELAYS_MS.length})`);
+        retryAttemptRef.current = attempt + 1;
+        setWaitingForProcessing(true);
+        setSearching(false);
+
+        retryTimerRef.current = setTimeout(() => {
+            // Only retry if the user hasn't changed the selected text in the meantime
+            if (activeSearchTextRef.current === text) {
+                handleSearch(text, true);
+            }
+        }, delay);
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    const handleSearch = async (text, isRetry = false) => {
         if (!sessionId || !text || text.length < 5) return;
 
-        console.log('🔍 Starting related content search:', {
+        if (!isRetry) {
+            retryAttemptRef.current = 0;
+        }
+
+        activeSearchTextRef.current = text;
+
+        console.log('Starting related content search:', {
             sessionId: sessionId.substring(0, 8) + '...',
             selectedText: text.substring(0, 100),
-            documentsAvailable: documents.length
+            documentsAvailable: documents.length,
+            isRetry
         });
 
         setSearching(true);
         setError(null);
         setLastSearchText(text);
+        setWaitingForProcessing(false);
 
         try {
             const result = await searchRelatedContent(sessionId, text);
 
-            console.log('🔍 Search result received:', {
+            console.log('Search result received:', {
                 totalResults: result.total_results,
                 relatedSections: result.related_sections?.length || 0,
                 searchTimeMs: result.search_time_ms,
-                processingStatus: result.processing_status
+                documentsStillProcessing: result.documents_still_processing
             });
 
             if (result.related_sections && result.related_sections.length > 0) {
                 setRelatedContent(result.related_sections);
                 setError(null);
+                cancelRetry();
+            } else if (result.documents_still_processing) {
+                // Documents aren't ready yet — queue a retry instead of failing
+                setRelatedContent([]);
+                scheduleRetry(text);
             } else {
                 const message = result.message || result.processing_note || 'No related content found';
                 setError(message);
                 setRelatedContent([]);
+                cancelRetry();
             }
-        } catch (error) {
-            console.error('🔍 Search failed:', error);
-            const errorMessage = error.response?.data?.detail || error.message || 'Search failed. Please try again.';
+        } catch (err) {
+            console.error('Search failed:', err);
+            const errorMessage = err.response?.data?.detail || err.message || 'Search failed. Please try again.';
             setError(errorMessage);
             setRelatedContent([]);
+            cancelRetry();
         } finally {
             setSearching(false);
         }
@@ -63,6 +127,7 @@ const RelatedContentPanel = ({
 
     const handleManualSearch = () => {
         if (selectedText) {
+            cancelRetry();
             handleSearch(selectedText);
         }
     };
@@ -146,7 +211,7 @@ const RelatedContentPanel = ({
                     </p>
                     <div className="mt-4 p-3 bg-blue-50 rounded-lg">
                         <p className="text-blue-700 text-xs">
-                            💡 <strong>Tip:</strong> Highlight any text in the PDF and related sections will appear here automatically!
+                            <strong>Tip:</strong> Highlight any text in the PDF and related sections will appear here automatically!
                         </p>
                     </div>
                 </div>
@@ -157,6 +222,20 @@ const RelatedContentPanel = ({
                     <p className="text-sm text-gray-500 mt-1">
                         Looking for: "{selectedText.substring(0, 50)}..."
                     </p>
+                </div>
+            ) : waitingForProcessing ? (
+                <div className="text-center py-8">
+                    <Clock className="h-12 w-12 text-yellow-400 mx-auto mb-3" />
+                    <p className="text-gray-600 font-medium">Documents are still processing</p>
+                    <p className="text-sm text-gray-500 mt-1">
+                        Your search has been queued and will run automatically once processing completes.
+                    </p>
+                    <button
+                        onClick={handleManualSearch}
+                        className="mt-3 text-sm text-purple-600 hover:text-purple-700 underline"
+                    >
+                        Search now anyway
+                    </button>
                 </div>
             ) : error ? (
                 <div className="bg-red-50 border border-red-200 rounded-lg p-4">

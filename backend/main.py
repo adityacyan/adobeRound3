@@ -484,13 +484,18 @@ async def process_document(document_id: str, session_id: str):
         # Update session status
         update_session_processing_status(session_id)
         
-        # Send WebSocket notification
-        asyncio.create_task(send_processing_update(
-            session_id, 
-            progress.stage, 
-            progress.message, 
-            int(progress.progress * 100)
-        ))
+        # Send WebSocket notification (schedule it if event loop is running)
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(send_processing_update(
+                session_id, 
+                progress.stage, 
+                progress.message, 
+                int(progress.progress * 100)
+            ))
+        except RuntimeError:
+            # No event loop running, skip WebSocket update
+            logger.debug(f"No event loop for WebSocket update: {progress.stage}")
         
         # Log progress for monitoring
         logger.info(f"Document {document_id} progress: {progress.stage} - {progress.progress:.1%} - {progress.message}")
@@ -523,12 +528,16 @@ async def process_document(document_id: str, session_id: str):
         update_session_processing_status(session_id)
         
         # Send completion notification via WebSocket
-        asyncio.create_task(send_processing_update(
-            session_id, 
-            "completed", 
-            f"Document '{document['original_filename']}' processed successfully", 
-            100
-        ))
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(send_processing_update(
+                session_id, 
+                "completed", 
+                f"Document '{document['original_filename']}' processed successfully", 
+                100
+            ))
+        except RuntimeError:
+            logger.debug("No event loop for completion WebSocket update")
         
         logger.info(f"Successfully processed document {document_id} in {processed_doc.processing_time_ms}ms using {processed_doc.processing_method}")
         
@@ -543,12 +552,16 @@ async def process_document(document_id: str, session_id: str):
         update_session_processing_status(session_id)
         
         # Send failure notification via WebSocket
-        asyncio.create_task(send_processing_update(
-            session_id, 
-            "failed", 
-            f"Failed to process '{document['original_filename']}': {str(e)}", 
-            0
-        ))
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(send_processing_update(
+                session_id, 
+                "failed", 
+                f"Failed to process '{document['original_filename']}': {str(e)}", 
+                0
+            ))
+        except RuntimeError:
+            logger.debug("No event loop for failure WebSocket update")
         
         logger.error(f"Failed to process document {document_id}: {e}")
     
@@ -781,12 +794,16 @@ async def upload_bulk_pdfs(
         start_background_processing(session_id)
         
         # Send upload completion notification via WebSocket
-        asyncio.create_task(send_processing_update(
-            session_id, 
-            "upload_completed", 
-            f"Successfully uploaded {len(uploaded_documents)} PDF files. Processing started.", 
-            None
-        ))
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(send_processing_update(
+                session_id, 
+                "upload_completed", 
+                f"Successfully uploaded {len(uploaded_documents)} PDF files. Processing started.", 
+                None
+            ))
+        except RuntimeError:
+            logger.debug("No event loop for upload completion WebSocket update")
     
     return UploadResponse(
         session_id=session_id,
@@ -901,7 +918,7 @@ async def get_document_sections(session_id: str, document_id: str):
         "extracted_text_length": document.get("extracted_text_length")
     }
 
-@app.get("/api/documents/{document_id}/content")
+@app.get("/documents/{document_id}/content")
 async def get_document_content(document_id: str, session_id: str):
     """
     Get full text content of a processed document for AI insights.
@@ -1652,6 +1669,12 @@ async def search_related_content(
             if doc_id in available_document_ids
         ]
     
+    # Determine whether any documents are still being processed
+    any_still_processing = any(
+        doc.get("processing_status") in ("pending", "processing", "priority")
+        for doc in documents
+    )
+
     if not available_document_ids:
         return {
             "selected_text": selected_text,
@@ -1659,7 +1682,12 @@ async def search_related_content(
             "total_results": 0,
             "search_time_ms": 0.0,
             "processing_status": processing_status,
-            "message": "No processed documents available for search"
+            "documents_still_processing": any_still_processing,
+            "message": (
+                "Documents are still processing. Search will be available shortly."
+                if any_still_processing
+                else "No processed documents available for search"
+            )
         }
     
     try:
@@ -1799,7 +1827,7 @@ async def serve_static_file(file_path: str):
     
     return response
 
-@app.post("/api/insights/generate")
+@app.post("/insights/generate")
 async def generate_insights(request: dict):
     """Generate comprehensive insights for document content"""
     try:
@@ -1811,7 +1839,9 @@ async def generate_insights(request: dict):
         if not content:
             return {"error": "Content is required"}
         
-        insights = llm_service.generate_insights(content)
+        # Run blocking LLM call in thread pool to avoid blocking the event loop
+        loop = asyncio.get_event_loop()
+        insights = await loop.run_in_executor(None, llm_service.generate_insights, content)
         if not insights:
             return {"error": "Failed to generate insights"}
         
@@ -1826,9 +1856,10 @@ async def generate_insights(request: dict):
             }
         }
     except Exception as e:
+        logger.error(f"Error in generate_insights endpoint: {e}")
         return {"error": f"Failed to generate insights: {str(e)}"}
 
-@app.post("/api/insights/takeaways")
+@app.post("/insights/takeaways")
 async def generate_takeaways_only(request: dict):
     """Generate only takeaways for faster response"""
     try:
@@ -1845,7 +1876,7 @@ async def generate_takeaways_only(request: dict):
     except Exception as e:
         return {"error": f"Failed to generate takeaways: {str(e)}"}
 
-@app.post("/api/insights/contradictions")
+@app.post("/insights/contradictions")
 async def generate_contradictions_only(request: dict):
     """Generate only contradictions for faster response"""
     try:
@@ -1862,7 +1893,7 @@ async def generate_contradictions_only(request: dict):
     except Exception as e:
         return {"error": f"Failed to generate contradictions: {str(e)}"}
 
-@app.post("/api/insights/examples")
+@app.post("/insights/examples")
 async def generate_examples_only(request: dict):
     """Generate only examples for faster response"""
     try:
@@ -1879,7 +1910,7 @@ async def generate_examples_only(request: dict):
     except Exception as e:
         return {"error": f"Failed to generate examples: {str(e)}"}
 
-@app.post("/api/insights/facts")
+@app.post("/insights/facts")
 async def generate_facts_only(request: dict):
     """Generate only 'did you know' facts for faster response"""
     try:
@@ -1896,7 +1927,7 @@ async def generate_facts_only(request: dict):
     except Exception as e:
         return {"error": f"Failed to generate facts: {str(e)}"}
 
-@app.get("/api/insights/cache/stats")
+@app.get("/insights/cache/stats")
 async def get_cache_stats():
     """Get LLM cache statistics"""
     llm_service = get_llm_service()
@@ -1904,7 +1935,7 @@ async def get_cache_stats():
         return {"error": "LLM service not available"}
     return llm_service.get_cache_stats()
 
-@app.post("/api/insights/cache/clear")
+@app.post("/insights/cache/clear")
 async def clear_cache():
     """Clear LLM cache"""
     llm_service = get_llm_service()
@@ -2102,7 +2133,7 @@ async def generate_podcast(session_id: str, request: PodcastRequest, background_
         response = PodcastResponse(
             audio_url=audio_url,
             duration_estimate="2-5 minutes",
-            format="MP3",
+            format="WAV",
             speakers_used=speakers_used,
             processing_time=processing_time,
             timestamp=datetime.now()
@@ -2127,11 +2158,13 @@ async def serve_audio(filename: str):
         if not audio_path.exists():
             raise HTTPException(status_code=404, detail="Audio file not found")
         
+        suffix = Path(filename).suffix.lower()
+        media_type = "audio/wav" if suffix == ".wav" else "audio/mpeg"
         return FileResponse(
             path=str(audio_path),
-            media_type="audio/mpeg",
+            media_type=media_type,
             filename=filename,
-            headers={"Cache-Control": "public, max-age=3600"}  # Cache for 1 hour
+            headers={"Cache-Control": "public, max-age=3600"}
         )
         
     except Exception as e:
@@ -2149,7 +2182,7 @@ async def get_podcast_status(session_id: str):
     return {
         "session_id": session_id,
         "audio_service_available": audio_service._validate_config(),
-        "supported_formats": ["MP3"],
+        "supported_formats": ["WAV"],
         "max_duration": "5 minutes"
     }
 

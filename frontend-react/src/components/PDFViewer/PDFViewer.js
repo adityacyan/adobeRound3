@@ -115,7 +115,7 @@ const PDFViewer = ({
                 console.log('Clearing previous Adobe viewer');
             }
 
-            const url = `http://localhost:8000/session/${sessionId}/documents/${activeDocumentId}/pdf`;
+            const url = `/api/session/${sessionId}/documents/${activeDocumentId}/pdf`;
             console.log('Fetching PDF from:', url);
 
             const response = await fetch(url);
@@ -198,7 +198,7 @@ const PDFViewer = ({
         if (!activeDocumentId || !sessionId) return;
 
         try {
-            const url = `http://localhost:8000/session/${sessionId}/documents/${activeDocumentId}/pdf`;
+            const url = `/api/session/${sessionId}/documents/${activeDocumentId}/pdf`;
             const response = await fetch(url);
 
             if (!response.ok) {

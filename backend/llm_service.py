@@ -170,11 +170,12 @@ class LLMService:
     
     def _create_insight_prompt(self, content: str) -> str:
         """Create comprehensive prompt for insight generation"""
+        truncated_content = content[:8000]
         return f"""
         Analyze the following document content and provide insights in JSON format with these exact keys:
         
         Content to analyze:
-        {content[:8000]}  # Limit content to avoid token limits
+        {truncated_content}
         
         Please provide a JSON response with:
         {{
@@ -191,6 +192,7 @@ class LLMService:
         - "Did you know" facts should be genuinely interesting or surprising
         - If any category has no relevant content, use an empty array []
         - Ensure all responses are based solely on the provided content
+        - Return ONLY valid JSON, no markdown code fences or extra text
         """
     
     def generate_insights(self, content: str) -> Optional[InsightResponse]:

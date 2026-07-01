@@ -238,7 +238,8 @@ const ActionControlsPanel = ({
         let ws = null;
         if (sessionId) {
             try {
-                ws = new WebSocket(`ws://localhost:8000/ws/${sessionId}`);
+                const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                ws = new WebSocket(`${wsProtocol}//${window.location.host}/api/ws/${sessionId}`);
                 setWsRef(ws);
 
                 ws.onmessage = (event) => {
@@ -317,7 +318,7 @@ const ActionControlsPanel = ({
             console.log('Generating podcast with request:', podcastRequest);
 
             // Call the backend API
-            const response = await fetch(`http://localhost:8000/session/${sessionId}/podcast/generate`, {
+            const response = await fetch(`/api/session/${sessionId}/podcast/generate`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -326,12 +327,23 @@ const ActionControlsPanel = ({
             });
 
             if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+                let errorMessage = `HTTP error! status: ${response.status}`;
+                try {
+                    const errorData = await response.json();
+                    errorMessage = errorData.detail || errorMessage;
+                } catch (e) {
+                    // If response is not JSON (e.g., HTML error page), use status text
+                    errorMessage = `${errorMessage} - ${response.statusText}`;
+                }
+                throw new Error(errorMessage);
             }
 
             const result = await response.json();
             console.log('Podcast generated:', result);
+
+            if (!result || !result.audio_url) {
+                throw new Error('Invalid response from server: missing audio_url');
+            }
 
             // Set the audio URL for playback
             setAudioUrl(result.audio_url);
@@ -761,6 +773,7 @@ const ActionControlsPanel = ({
                                             className="w-full"
                                             preload="metadata"
                                         >
+                                            <source src={audioUrl} type="audio/wav" />
                                             <source src={audioUrl} type="audio/mpeg" />
                                             Your browser does not support the audio element.
                                         </audio>
