@@ -23,11 +23,9 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy and install Python dependencies (cached as long as requirements.txt is unchanged)
+# Copy and install Python dependencies
 COPY requirements.txt .
-# Install PyTorch CPU-only first (avoids downloading 2GB+ CUDA deps)
-RUN pip install torch --extra-index-url https://download.pytorch.org/whl/cpu --no-cache-dir && \
-    pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy backend source (changes most often, placed last)
 COPY backend/ ./backend/
