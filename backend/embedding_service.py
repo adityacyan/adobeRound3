@@ -7,7 +7,6 @@ Model is baked into the Docker image at build time - no runtime download.
 import asyncio
 import time
 import logging
-import os
 import numpy as np
 from typing import Dict, List, Optional
 from datetime import datetime
@@ -90,11 +89,7 @@ class EmbeddingService:
         logger.info(f"Embedding model loaded in {elapsed:.1f}ms")
 
     def _load_model(self) -> TextEmbedding:
-        cache_dir = MODEL_CACHE_DIR if os.path.isdir(MODEL_CACHE_DIR) else None
-        return TextEmbedding(
-            model_name=self.config.model_name,
-            cache_dir=cache_dir,
-        )
+        return TextEmbedding(model_name=self.config.model_name)
 
     def _encode_texts(self, texts: List[str]) -> np.ndarray:
         # fastembed returns a generator, collect into array

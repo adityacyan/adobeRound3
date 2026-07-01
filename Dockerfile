@@ -27,11 +27,12 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Pre-download the embedding model into the image so there's no runtime download
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2', cache_folder='/app/models')"
+# Pre-download the fastembed ONNX model into the image (no runtime download)
+RUN python -c "from fastembed import TextEmbedding; list(TextEmbedding(model_name='BAAI/bge-small-en-v1.5').embed(['warmup']))"
 
-# Copy backend source (changes most often, placed last)
+# Copy application files
 COPY backend/ ./backend/
+COPY server.py ./server.py
 
 # Copy built frontend from previous stage
 COPY --from=frontend-builder /app/frontend/build ./frontend/build
