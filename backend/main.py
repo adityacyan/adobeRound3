@@ -1434,8 +1434,23 @@ async def generate_summary(session_id: str, request: SummaryRequest):
             if not document:
                 raise HTTPException(status_code=404, detail="Document not found in session")
             
+            # Wait up to 60s for processing to complete instead of rejecting immediately
             if document.get("processing_status") != "completed":
-                raise HTTPException(status_code=400, detail="Document processing not completed")
+                max_wait = 60
+                waited = 0
+                while document.get("processing_status") not in ("completed", "failed") and waited < max_wait:
+                    await asyncio.sleep(2)
+                    waited += 2
+                    # Re-fetch from session in case it was updated
+                    documents = session.get("documents", [])
+                    document = next((doc for doc in documents if doc.get("document_id") == request.document_id), None)
+                    if not document:
+                        raise HTTPException(status_code=404, detail="Document not found in session")
+                
+                if document.get("processing_status") == "failed":
+                    raise HTTPException(status_code=400, detail="Document processing failed")
+                if document.get("processing_status") != "completed":
+                    raise HTTPException(status_code=400, detail="Document processing timed out")
             
             # Get all section content
             sections = document.get("sections", [])
