@@ -1,6 +1,7 @@
 """
-Embedding service using local sentence-transformers (all-MiniLM-L6-v2) + FAISS.
+Embedding service using fastembed (ONNX Runtime, no PyTorch) + FAISS.
 Model is baked into the Docker image at build time - no runtime download.
+~100MB RAM vs ~700MB for sentence-transformers+torch.
 """
 
 import asyncio
@@ -12,20 +13,20 @@ from typing import Dict, List, Optional
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
-from sentence_transformers import SentenceTransformer
+from fastembed import TextEmbedding
 import faiss
 from pydantic import BaseModel
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-LOCAL_MODEL_NAME = "all-MiniLM-L6-v2"
+FASTEMBED_MODEL = "BAAI/bge-small-en-v1.5"  # 33MB, 384-dim, fast ONNX
 MODEL_CACHE_DIR = "/app/models"
 EMBEDDING_DIMENSION = 384
 
 
 class EmbeddingConfig(BaseModel):
-    model_name: str = LOCAL_MODEL_NAME
+    model_name: str = FASTEMBED_MODEL
     embedding_dimension: int = EMBEDDING_DIMENSION
     faiss_index_type: str = "IndexFlatIP"
     batch_size: int = 64
@@ -54,11 +55,11 @@ class SearchResult(BaseModel):
 
 
 class EmbeddingService:
-    """Local sentence-transformer embedding service with FAISS index."""
+    """ONNX-based local embedding service using fastembed + FAISS."""
 
     def __init__(self, config: EmbeddingConfig = None):
         self.config = config or EmbeddingConfig()
-        self.model: Optional[SentenceTransformer] = None
+        self.model: Optional[TextEmbedding] = None
         self.faiss_index: Optional[faiss.Index] = None
         self.embeddings_metadata: Dict[int, DocumentEmbedding] = {}
         self.document_embeddings: Dict[str, List[int]] = {}
@@ -76,7 +77,7 @@ class EmbeddingService:
         if self.is_initialized:
             return
 
-        logger.info(f"Loading local embedding model: {self.config.model_name}")
+        logger.info(f"Loading fastembed model: {self.config.model_name}")
         start_time = time.time()
 
         self.model = await asyncio.get_event_loop().run_in_executor(
@@ -88,20 +89,21 @@ class EmbeddingService:
         elapsed = (time.time() - start_time) * 1000
         logger.info(f"Embedding model loaded in {elapsed:.1f}ms")
 
-    def _load_model(self) -> SentenceTransformer:
-        # Use baked-in cache dir first, fall back to default HF cache
+    def _load_model(self) -> TextEmbedding:
         cache_dir = MODEL_CACHE_DIR if os.path.isdir(MODEL_CACHE_DIR) else None
-        return SentenceTransformer(self.config.model_name, cache_folder=cache_dir)
+        return TextEmbedding(
+            model_name=self.config.model_name,
+            cache_dir=cache_dir,
+        )
 
     def _encode_texts(self, texts: List[str]) -> np.ndarray:
-        embeddings = self.model.encode(
-            texts,
-            batch_size=self.config.batch_size,
-            show_progress_bar=False,
-            convert_to_numpy=True,
-            normalize_embeddings=True,
-        )
-        return embeddings
+        # fastembed returns a generator, collect into array
+        embeddings = list(self.model.embed(texts, batch_size=self.config.batch_size))
+        vectors = np.array(embeddings, dtype=np.float32)
+        # normalize for cosine similarity
+        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+        norms = np.where(norms == 0, 1, norms)
+        return vectors / norms
 
     async def _generate_embeddings_batch(self, texts: List[str]) -> np.ndarray:
         return await asyncio.get_event_loop().run_in_executor(
@@ -159,9 +161,12 @@ class EmbeddingService:
         processing_time = (time.time() - start_time) * 1000
         self._update_embedding_stats(len(sections), processing_time)
         logger.info(
-            f"Generated {len(document_embeddings)} embeddings for {document_id} in {processing_time:.1f}ms"
+            f"Generated {len(document_embeddings)} embeddings in {processing_time:.1f}ms"
         )
         return document_embeddings
+
+    def _encode_texts_sync(self, texts: List[str]) -> np.ndarray:
+        return self._encode_texts(texts)
 
     async def semantic_search(
         self,
