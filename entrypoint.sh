@@ -1,50 +1,33 @@
 #!/bin/bash
 
-# Create .env file from environment variables and defaults
+# Validate required env vars
+if [ -z "$GEMINI_API_KEY" ]; then
+    echo "ERROR: GEMINI_API_KEY is not set. Set it in Railway environment variables."
+    exit 1
+fi
+
+echo "GEMINI_API_KEY is set (length: ${#GEMINI_API_KEY})"
+echo "LLM Provider: ${LLM_PROVIDER:-gemini}"
+echo "Gemini Model: ${GEMINI_MODEL:-gemini-2.5-flash}"
+echo "Session Timeout: ${SESSION_TIMEOUT_HOURS:-4} hours"
+echo "Max File Size: ${MAX_FILE_SIZE_MB:-50} MB"
+
+# Write runtime .env so load_dotenv() in Python picks it up
 cat > /app/.env <<EOL
-# API Keys (provided at runtime)
-GEMINI_API_KEY=${GEMINI_API_KEY:-}
-AZURE_TTS_KEY=${AZURE_TTS_KEY:-}
-AZURE_TTS_ENDPOINT=${AZURE_TTS_ENDPOINT:-}
-AZURE_TTS_DEPLOYMENT=${AZURE_TTS_DEPLOYMENT:-}
-
-# Google Cloud Configuration
-GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS:-}
-
-# Adobe Configuration
-ADOBE_EMBED_API_KEY=${ADOBE_EMBED_API_KEY:-}
-REACT_APP_ADOBE_CLIENT_ID=f3af072fa66b4a81bd773f77c7ec0070
-
-# Service Configuration (defaults from current setup)
+GEMINI_API_KEY=${GEMINI_API_KEY}
+GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.1-flash-lite}
+GEMINI_TTS_MODEL=${GEMINI_TTS_MODEL:-gemini-3.1-flash-tts-preview}
+GEMINI_TTS_HOST_VOICE=${GEMINI_TTS_HOST_VOICE:-Kore}
+GEMINI_TTS_GUEST_VOICE=${GEMINI_TTS_GUEST_VOICE:-Puck}
 LLM_PROVIDER=${LLM_PROVIDER:-gemini}
-GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
-TTS_PROVIDER=${TTS_PROVIDER:-azure}
-
-AZURE_TTS_API_VERSION=${AZURE_TTS_API_VERSION:-2025-03-01-preview}
-AZURE_TTS_HOST_VOICE=${AZURE_TTS_HOST_VOICE:-nova}
-AZURE_TTS_GUEST_VOICE=${AZURE_TTS_GUEST_VOICE:-onyx}
-AZURE_TTS_VOICE=${AZURE_TTS_VOICE:-alloy}
-
-# Application Configuration
 SESSION_TIMEOUT_HOURS=${SESSION_TIMEOUT_HOURS:-4}
 MAX_FILE_SIZE_MB=${MAX_FILE_SIZE_MB:-50}
 SPEED_PRIORITY=${SPEED_PRIORITY:-high}
 ACCURACY_MINIMUM=${ACCURACY_MINIMUM:-0.85}
-FASTAPI_BACKEND_PORT=${FASTAPI_BACKEND_PORT:-8000}
-
-# Frontend Configuration
-REACT_APP_API_URL=http://localhost:${FASTAPI_BACKEND_PORT}
-GENERATE_SOURCEMAP=false
-PORT=8080
-BROWSER=none
+PROCESSING_TIMEOUT_S=${PROCESSING_TIMEOUT_S:-60}
+PORT=${PORT:-8080}
 EOL
 
-echo "✅ Environment file created successfully!"
-echo "🔧 Configuration loaded:"
-echo "   LLM Provider: $LLM_PROVIDER"
-echo "   TTS Provider: $TTS_PROVIDER"
-echo "   Session Timeout: $SESSION_TIMEOUT_HOURS hours"
-echo "   Max File Size: $MAX_FILE_SIZE_MB MB"
+echo "Runtime .env written successfully"
 
-# Start the application
 exec "$@"

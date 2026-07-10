@@ -209,7 +209,7 @@ class DocumentProcessor:
         return max(0.0, min(1.0, quality_score))
     
     def _chunk_content(self, sections: List[DocumentSection], document_id: str) -> List[DocumentSection]:
-        """Enhanced content chunking for better searchability."""
+        """Merge small blocks into meaningful chunks, then split oversized ones."""
         self._notify_progress(ProcessingProgress(
             document_id=document_id,
             stage="chunking",
@@ -217,18 +217,83 @@ class DocumentProcessor:
             message="Optimizing content chunks",
             timestamp=datetime.now()
         ))
-        
-        chunked_sections = []
-        
+
+        TARGET_CHUNK_CHARS = 800
+        MAX_CHUNK_CHARS = 1200
+        merged = []
+        buffer = ""
+        buffer_page = 1
+        buffer_type = "paragraph"
+        buffer_idx = 0
+
         for section in sections:
-            # If section is too long, split it
-            if section.char_count > 1000:
-                chunks = self._split_section_into_chunks(section)
-                chunked_sections.extend(chunks)
+            content = section.content.strip()
+            if not content:
+                continue
+
+            # Always keep headers as standalone anchors
+            if section.section_type == "header":
+                if buffer.strip():
+                    merged.append(DocumentSection(
+                        section_id=f"chunk_{buffer_idx}",
+                        title=self._extract_section_title(buffer),
+                        content=buffer.strip(),
+                        page_number=buffer_page,
+                        section_type=buffer_type,
+                        confidence=0.9,
+                        word_count=len(buffer.split()),
+                        char_count=len(buffer),
+                    ))
+                    buffer_idx += 1
+                    buffer = ""
+                merged.append(section)
+                continue
+
+            # Accumulate into buffer
+            if len(buffer) + len(content) <= TARGET_CHUNK_CHARS:
+                buffer += " " + content if buffer else content
+                buffer_page = section.page_number
+                buffer_type = section.section_type
             else:
-                chunked_sections.append(section)
-        
-        return chunked_sections
+                if buffer.strip():
+                    merged.append(DocumentSection(
+                        section_id=f"chunk_{buffer_idx}",
+                        title=self._extract_section_title(buffer),
+                        content=buffer.strip(),
+                        page_number=buffer_page,
+                        section_type=buffer_type,
+                        confidence=0.9,
+                        word_count=len(buffer.split()),
+                        char_count=len(buffer),
+                    ))
+                    buffer_idx += 1
+                buffer = content
+                buffer_page = section.page_number
+                buffer_type = section.section_type
+
+        # Flush remaining buffer
+        if buffer.strip():
+            merged.append(DocumentSection(
+                section_id=f"chunk_{buffer_idx}",
+                title=self._extract_section_title(buffer),
+                content=buffer.strip(),
+                page_number=buffer_page,
+                section_type=buffer_type,
+                confidence=0.9,
+                word_count=len(buffer.split()),
+                char_count=len(buffer),
+            ))
+
+        # Split any chunks that are still too large
+        final = []
+        for chunk in merged:
+            if chunk.char_count > MAX_CHUNK_CHARS:
+                final.extend(self._split_section_into_chunks(chunk))
+            else:
+                final.append(chunk)
+
+        logger.info(f"Chunking: {len(sections)} blocks -> {len(final)} chunks")
+        return final
     
     def _split_section_into_chunks(self, section: DocumentSection) -> List[DocumentSection]:
         """Split large sections into smaller chunks."""

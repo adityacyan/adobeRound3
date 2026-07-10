@@ -1,4 +1,4 @@
-import google.generativeai as genai
+from google import genai as google_genai
 import json
 import hashlib
 import time
@@ -49,6 +49,7 @@ class LLMService:
         # Initialize authentication mode
         self.auth_mode = None
         self.model = None
+        self.client = None
         self.gcp_client = None
         
         self._initialize_model()
@@ -108,24 +109,23 @@ class LLMService:
         """Initialize API key mode"""
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY is required for API key mode")
-            
+
         logger.info(f"Initializing LLM service with model: {self.model_name}")
         logger.info(f"API key found: {self.api_key[:10]}...")
-        
-        # Configure Gemini with API key
-        genai.configure(api_key=self.api_key)
-        self.model = genai.GenerativeModel(self.model_name)
-        
+
+        self.client = google_genai.Client(api_key=self.api_key)
         self.auth_mode = "api_key"
         logger.info("API key mode initialized successfully")
         
     def _generate_content(self, prompt: str) -> Optional[str]:
-        """Generate content using the appropriate authentication mode"""
+        """Generate content using the Interactions API."""
         try:
             if self.auth_mode == "api_key":
-                # Use the existing genai library
-                response = self.model.generate_content(prompt)
-                return response.text if response else None
+                interaction = self.client.interactions.create(
+                    model=self.model_name,
+                    input=prompt,
+                )
+                return interaction.output_text if interaction else None
                 
             elif self.auth_mode == "gcp":
                 # Use GCP GenerativeService client
@@ -170,11 +170,12 @@ class LLMService:
     
     def _create_insight_prompt(self, content: str) -> str:
         """Create comprehensive prompt for insight generation"""
+        truncated_content = content[:8000]
         return f"""
         Analyze the following document content and provide insights in JSON format with these exact keys:
         
         Content to analyze:
-        {content[:8000]}  # Limit content to avoid token limits
+        {truncated_content}
         
         Please provide a JSON response with:
         {{
@@ -191,6 +192,7 @@ class LLMService:
         - "Did you know" facts should be genuinely interesting or surprising
         - If any category has no relevant content, use an empty array []
         - Ensure all responses are based solely on the provided content
+        - Return ONLY valid JSON, no markdown code fences or extra text
         """
     
     def generate_insights(self, content: str) -> Optional[InsightResponse]:

@@ -13,10 +13,42 @@ A web-based PDF document intelligence system designed for the Adobe India Hackat
 
 ## Architecture
 
-- **Frontend**: React-based web interface with 3-column layout
-- **Backend**: FastAPI with session management and document processing
-- **Processing**: Background PDF analysis with semantic search capabilities
-- **Deployment**: Single Docker container with both frontend and backend
+The PDF Analysis Workbench uses a multi-service Docker architecture:
+
+- **Frontend Service**: nginx serving React static files (port 8080)
+- **Backend Service**: FastAPI Python application (internal port 8000, not exposed to host)
+- **Communication**: nginx reverse proxy routes `/api/*` requests to backend
+- **Network**: Both services connected via Docker bridge network
+- **Optional**: Redis service for caching (enabled with `--profile with-redis`)
+
+### Service Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│                   Host (port 8080)                  │
+│                                                     │
+│  ┌───────────────────────────────────────────────┐ │
+│  │  Frontend Service (nginx)                     │ │
+│  │  - Serves React static files                  │ │
+│  │  - Proxies /api/* to backend                  │ │
+│  │  - Port 80 (internal)                         │ │
+│  └─────────────┬─────────────────────────────────┘ │
+│                │ app-network                        │
+│  ┌─────────────▼─────────────────────────────────┐ │
+│  │  Backend Service (FastAPI)                    │ │
+│  │  - REST API endpoints                         │ │
+│  │  - Document processing                        │ │
+│  │  - Port 8000 (internal only)                  │ │
+│  └───────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────┘
+```
+
+### Key Features
+
+- **Independent Scaling**: Frontend and backend can scale separately
+- **Security**: Backend not directly accessible from host
+- **Separation of Concerns**: Clear boundary between presentation and logic
+- **Health Checks**: Both services monitored for availability
 
 ## Quick Start
 
@@ -83,8 +115,43 @@ streamlit run frontend/main.py --server.port 8081
 - Check firewall settings
 - Verify backend health endpoint
 
-### 🐳 Docker Deployment Guide
-[Guide docker](DOCKER_DEPLOYMENT_GUIDE.md)
+### 🐳 Docker Deployment (Recommended)
+
+The application is deployed using Docker Compose with separate frontend and backend services.
+
+**Quick Start:**
+
+1. **Create `.env` file** with your API keys:
+   ```bash
+   GEMINI_API_KEY=your_key_here
+   ADOBE_EMBED_API_KEY=f3af072fa66b4a81bd773f77c7ec0070
+   ```
+
+2. **Build and start services**:
+   ```bash
+   docker-compose build
+   docker-compose up -d
+   ```
+
+3. **Access application**: http://localhost:8080
+
+4. **Check service status**:
+   ```bash
+   docker-compose ps
+   curl http://localhost:8080/health
+   ```
+
+5. **View logs**:
+   ```bash
+   docker-compose logs -f
+   ```
+
+6. **Stop services**:
+   ```bash
+   docker-compose down
+   ```
+
+**For detailed Docker deployment instructions, see [DOCKER_DEPLOYMENT_GUIDE.md](DOCKER_DEPLOYMENT_GUIDE.md)**
 
 
 ## Project structure
